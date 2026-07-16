@@ -1,0 +1,118 @@
+# Deliberately drifted from petstore-old.yaml. Each change below is a case the
+# differ must eventually catch — keep this list in sync when editing:
+#   info.version.changed          1.0.0 -> 2.0.0
+#   path.added                    /health
+#   method.removed                delete /pets/{petId}
+#   param.required.tightened      /pets get: limit is now required
+#   param.added.optional          /pets get: sort
+#   operation.deprecated          /pets/{petId} get
+#   response.status.added         /pets get: 429
+#   schema.property.removed       Pet.tag
+#   schema.type.changed           Pet.id string -> integer
+#   schema.enum.value.added       Pet.status: adopted
+#   schema.property.added.required NewPet.species
+openapi: 3.0.3
+info:
+  title: Petstore
+  version: 2.0.0
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+  /pets:
+    get:
+      operationId: listPets
+      summary: List all pets
+      parameters:
+        - name: limit
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A list of pets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pet'
+        '429':
+          description: Too many requests
+    post:
+      operationId: createPet
+      summary: Create a pet
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewPet'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+  /pets/{petId}:
+    get:
+      operationId: getPet
+      summary: Get a pet by id
+      deprecated: true
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+        '404':
+          description: Not found
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        status:
+          type: string
+          enum:
+            - available
+            - pending
+            - sold
+            - adopted
+    NewPet:
+      type: object
+      required:
+        - name
+        - species
+      properties:
+        name:
+          type: string
+        species:
+          type: string
+        tag:
+          type: string
