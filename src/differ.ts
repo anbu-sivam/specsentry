@@ -1,4 +1,14 @@
-import { HTTP_METHODS } from './types.js';
+import {
+  isRecord,
+  mediaTypesOf,
+  operationsOf,
+  pathsOf,
+  propertiesOf,
+  requiredNamesOf,
+  schemaAt,
+  typeOf,
+} from './openapi.js';
+import type { OperationObject, ParameterObject, PathItemObject, SchemaObject } from './openapi.js';
 import type {
   DiffKind,
   DiffTarget,
@@ -7,42 +17,6 @@ import type {
   LoadedSpec,
   RawDifference,
 } from './types.js';
-
-interface SchemaObject {
-  type?: string | string[];
-  properties?: Record<string, SchemaObject>;
-  required?: string[];
-  items?: SchemaObject;
-  enum?: unknown[];
-  [key: string]: unknown;
-}
-
-interface ParameterObject {
-  name?: string;
-  in?: string;
-  required?: boolean;
-  schema?: SchemaObject;
-  [key: string]: unknown;
-}
-
-interface MediaTypeObject {
-  schema?: SchemaObject;
-  [key: string]: unknown;
-}
-
-interface OperationObject {
-  operationId?: string;
-  deprecated?: boolean;
-  parameters?: ParameterObject[];
-  requestBody?: { content?: Record<string, MediaTypeObject>; [key: string]: unknown };
-  responses?: Record<string, { content?: Record<string, MediaTypeObject>; [key: string]: unknown }>;
-  [key: string]: unknown;
-}
-
-interface PathItemObject {
-  parameters?: ParameterObject[];
-  [key: string]: unknown;
-}
 
 /** One operation, and the location prefix every finding under it extends. */
 interface Endpoint {
@@ -67,41 +41,6 @@ interface SchemaWalk {
   path: string;
   method: HttpMethod;
   field?: string[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-/** OpenAPI 3.1 allows `type: ['string', 'null']`; the order carries no meaning. */
-function typeOf(schema: SchemaObject): string | undefined {
-  const { type } = schema;
-  if (typeof type === 'string') return type;
-  if (Array.isArray(type)) return [...type].map(String).sort().join('|');
-  return undefined;
-}
-
-function propertiesOf(schema: SchemaObject): Record<string, SchemaObject> {
-  return isRecord(schema.properties) ? (schema.properties as Record<string, SchemaObject>) : {};
-}
-
-function requiredNamesOf(schema: SchemaObject): Set<string> {
-  const { required } = schema;
-  return new Set(Array.isArray(required) ? required.filter((n) => typeof n === 'string') : []);
-}
-
-/** Anything with a `content` map: a Request Body Object or a Response Object. */
-interface BodyObject {
-  content?: Record<string, MediaTypeObject>;
-}
-
-function schemaAt(body: BodyObject | undefined, mediaType: string): SchemaObject | undefined {
-  const media = body?.content?.[mediaType];
-  return isRecord(media?.schema) ? (media.schema as SchemaObject) : undefined;
-}
-
-function mediaTypesOf(body: BodyObject | undefined): string[] {
-  return isRecord(body?.content) ? Object.keys(body.content) : [];
 }
 
 function targetOf(walk: SchemaWalk): DiffTarget {
@@ -513,15 +452,6 @@ function compareOperation(
   return differences;
 }
 
-function operationsOf(pathItem: PathItemObject): Map<HttpMethod, OperationObject> {
-  const operations = new Map<HttpMethod, OperationObject>();
-  for (const method of HTTP_METHODS) {
-    const operation = pathItem[method];
-    if (isRecord(operation)) operations.set(method, operation as OperationObject);
-  }
-  return operations;
-}
-
 function methodNamesOf(pathItem: PathItemObject): string[] {
   return [...operationsOf(pathItem).keys()];
 }
@@ -623,12 +553,7 @@ export function diffSpecs(oldSpec: LoadedSpec, newSpec: LoadedSpec): RawDifferen
     });
   }
 
-  differences.push(
-    ...comparePaths(
-      (isRecord(before.paths) ? before.paths : {}) as Record<string, PathItemObject>,
-      (isRecord(after.paths) ? after.paths : {}) as Record<string, PathItemObject>,
-    ),
-  );
+  differences.push(...comparePaths(pathsOf(before), pathsOf(after)));
 
   return differences;
 }

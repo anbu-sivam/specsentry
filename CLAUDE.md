@@ -31,20 +31,28 @@ cli.ts -> index.ts (detectDrift)
             +-- differ.ts    two specs -> RawDifference[]   (no judgement)
             +-- classifier.ts RawDifference[] -> ClassifiedDifference[] (via rules.ts)
             +-- consumers.ts  dir -> ConsumerManifest[]
+            +-- validate.ts   manifests x old spec -> ManifestProblem[]  (fatal if any)
             +-- impact.ts     + manifests -> ImpactedDifference[] (via rules.ts)
 ```
 
 | File | Role |
 | --- | --- |
 | `src/types.ts` | Shared vocabulary: `DiffKind`, `RawDifference`, `DiffTarget`, `Severity`, `DriftReport`, the consumer types, `HTTP_METHODS`. |
+| `src/openapi.ts` | The shape of an OpenAPI document and the accessors for reading one. No pipeline logic. |
 | `src/loader.ts` | Reads a file, parses it, dereferences `$ref`s. Throws `SpecLoadError`. |
 | `src/differ.ts` | Walks two specs, emits `RawDifference[]`. |
 | `src/classifier.ts` | Looks each difference up in the rules table; also sorts and summarizes. |
 | `src/consumers.ts` | Reads `*.json` manifests from a directory. Throws `ManifestLoadError`. |
+| `src/validate.ts` | Checks each manifest's claims against the old spec. Throws `ManifestValidationError`. |
 | `src/impact.ts` | Cross-references differences against manifests, naming affected consumers. |
 | `src/rules.ts` | The rules table — plain data, the only place a kind is judged. |
 | `src/index.ts` | `detectDrift()` orchestration plus the public API surface. |
 | `src/cli.ts` | Commander entrypoint, text/JSON rendering, exit codes. |
+
+`openapi.ts` exists so the differ and the validator cannot disagree about what a
+schema is. A field the validator rejects is one the impact layer could never
+match, and that disagreement would be invisible — no test would fail, findings
+would just quietly attribute to nobody.
 
 ### The rule that matters
 
@@ -123,6 +131,44 @@ Two matching rules worth knowing:
   proof the payload carries a specific leaf — an `owner` object declared before
   `owner.email` became required is exactly what would lack it.
 
+### Invalid manifests stop the run
+
+Every manifest is checked against the **old** spec before any impact is
+attributed: does the path exist, does the method exist on it, does each `reads`
+field appear in a response schema and each `sends` field in the request body. If
+anything is wrong, `detectDrift` throws `ManifestValidationError` carrying
+*every* problem, and the CLI prints them and exits **2 without a drift report**.
+
+**Why the whole run rather than dropping the bad manifest or the bad line.**
+Both of those alternatives produce a report that is silently short: a typo in
+`reads` makes the field unmatched, so the consumer that actually breaks is never
+named, and the finding reads `0 consumers affected`. A human reads that as *safe
+to ship*. That is the exact failure this layer exists to remove, so degrading to
+it on bad input would be self-defeating — the tool would be at its least reliable
+precisely when its input is least trustworthy.
+
+It is also what already happened: `method: "fetch"` has always thrown
+`ManifestLoadError` and failed the run. `path: "/petz"` is the same class of
+mistake — a manifest naming something that does not exist — and treating one as
+fatal and the other as a shrug would be arbitrary.
+
+The cost is bounded, which is what makes this affordable: `--consumers` is
+opt-in, so the drift report is always one flag away. Refusing to print it costs
+a re-run, never information. The CLI says so in the error.
+
+Validation is against the old spec because that is the contract consumers run
+against today. A field that exists only in the new spec is one nobody can be
+using yet, so `sends: ["species"]` is a manifest describing a future it has not
+shipped.
+
+**Validity is decided by resolving the declared path, not by enumerating the
+schema.** Dereferencing turns a self-referencing `$ref` into a real object cycle,
+where `child.child.name` is genuinely addressable and enumeration would never
+finish producing every path. Following a path someone already wrote is bounded by
+its own length. `fieldPathsOf` still enumerates for the *did-you-mean* hint in
+the message, and stops at cycles — that is a hint, not a verdict, and the two
+must not be confused.
+
 ### Why findings carry a structured target
 
 `RawDifference.location` is for humans and **cannot be parsed back**. `items` and
@@ -154,7 +200,7 @@ api-contract-drift diff <old> <new> [--json] [--consumers <dir>]
 
 `--fail-on` defaults to `breaking`. Exit codes: **0** clean, **1** the
 `--fail-on` threshold was tripped (for CI gating), **2** an operational error
-(unreadable spec or manifest, bad flag).
+(unreadable spec, unreadable or untrue manifest, bad flag).
 
 Exit codes key off severity alone. Who is affected is reported, never gated on:
 a breaking change with no known consumer still fails the build, because a
@@ -194,6 +240,16 @@ so preserve it when editing:
 direction, endpoint matching, and nested-field prefix rules with hand-built
 manifests.
 
+`test/fixtures/consumers-invalid/` holds four manifests that are each wrong in a
+different way — a typo'd path, a real method the path doesn't define, a typo'd
+field, and one with three problems at once. **Keep it separate from
+`consumers/`**, which must stay valid: loading a directory loads all of it.
+
+`test/validate.test.ts` asserts that the valid fixtures produce zero problems,
+which is what pins the validator and the impact layer to one idea of a field
+path. If they ever diverge, that test fails rather than the disagreement passing
+silently.
+
 `test/cli.test.ts` spawns the CLI through `tsx` against source, so it does not
 require a build first.
 
@@ -221,10 +277,20 @@ Still open, and deliberately so:
 
 On the consumer layer:
 
-- **Manifests are taken at their word.** Nothing checks a declared path/method
-  against the spec, so a typo in `reads` silently means "not affected" and a
-  manifest naming a dead endpoint reports nothing. Validating manifests against
-  the old spec would catch both, and is the obvious next step.
+- ~~Manifests are taken at their word~~ — `validate.ts` now checks every claim
+  against the old spec, and an untrue one stops the run. See above.
+- **A manifest can't be added in the same commit as the endpoint it uses.**
+  Validation is against the old spec, so a PR that adds `/health` *and* a
+  manifest declaring it fails: the path doesn't exist in old. Arguably correct
+  (nobody was calling it, so nothing can break), but it makes the natural
+  workflow awkward. Allowing paths present in the new spec would fix it, at the
+  cost of a rule that's harder to explain.
+- **No suggestion for near-misses.** The message lists available fields, which
+  is enough to spot `nmae` -> `name`, but it doesn't say so. Edit distance would
+  be deterministic and cheap; it just isn't there.
+- **`reads` is checked against every response status, not the one meant.** A
+  field that exists only on the 404 body validates when read from the 200.
+  Manifests don't name statuses, so tightening this means extending the format.
 - **Enum values aren't declared, only fields.** `request.enum.value.removed`
   therefore implicates every sender of the field, not only those sending the
   dropped value. Over-reports, deliberately.

@@ -1,0 +1,20 @@
+{
+  "consumer": "confused-service",
+  "uses": [
+    {
+      "path": "/pets",
+      "method": "get",
+      "reads": ["id", "colour"]
+    },
+    {
+      "path": "/pets",
+      "method": "post",
+      "sends": ["name", "species"]
+    },
+    {
+      "path": "/nope",
+      "method": "get",
+      "reads": ["id"]
+    }
+  ]
+}

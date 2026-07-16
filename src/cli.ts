@@ -5,6 +5,8 @@ import { Command } from 'commander';
 import { ManifestLoadError } from './consumers.js';
 import { detectDrift } from './index.js';
 import { SpecLoadError } from './loader.js';
+import { ManifestValidationError } from './validate.js';
+import type { ManifestProblem } from './validate.js';
 import type { DriftReport, Severity } from './types.js';
 
 const SEVERITY_LABEL: Record<Severity, string> = {
@@ -37,6 +39,34 @@ function renderText(report: DriftReport): string {
 
   const { BREAKING, WARNING, NON_BREAKING } = report.summary;
   lines.push(`${BREAKING} breaking, ${WARNING} warning, ${NON_BREAKING} non-breaking`);
+  return lines.join('\n');
+}
+
+/**
+ * Manifest problems are the user's input being wrong, not the API having
+ * changed, so they are reported on their own terms rather than as findings.
+ */
+function renderProblems(problems: ManifestProblem[]): string {
+  const byFile = new Map<string, ManifestProblem[]>();
+  for (const problem of problems) {
+    const existing = byFile.get(problem.source);
+    if (existing === undefined) byFile.set(problem.source, [problem]);
+    else existing.push(problem);
+  }
+
+  const noun = problems.length === 1 ? 'problem' : 'problems';
+  const lines = [`${problems.length} ${noun} in consumer manifests:`, ''];
+
+  for (const [source, group] of byFile) {
+    lines.push(`  ${group[0]?.consumer} — ${source}`);
+    for (const problem of group) {
+      lines.push(`    ${problem.at}: ${problem.message}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('No report produced. Fix the manifests above, or drop --consumers');
+  lines.push('to diff the specs without attributing impact.');
   return lines.join('\n');
 }
 
@@ -82,6 +112,11 @@ export function buildProgram(): Command {
         try {
           report = await detectDrift(oldPath, newPath, { consumersDir: options.consumers });
         } catch (error) {
+          if (error instanceof ManifestValidationError) {
+            console.error(renderProblems(error.problems));
+            process.exitCode = 2;
+            return;
+          }
           if (error instanceof SpecLoadError || error instanceof ManifestLoadError) {
             console.error(error.message);
             process.exitCode = 2;

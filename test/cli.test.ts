@@ -11,6 +11,7 @@ const CLI = repoUrl('../src/cli.ts');
 const OLD = repoUrl('./fixtures/petstore-old.yaml');
 const NEW = repoUrl('./fixtures/petstore-new.yaml');
 const CONSUMERS = repoUrl('./fixtures/consumers');
+const BAD_CONSUMERS = repoUrl('./fixtures/consumers-invalid');
 
 interface Run {
   stdout: string;
@@ -127,5 +128,70 @@ describe('cli diff --consumers', () => {
     const { code } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--fail-on', 'breaking');
 
     expect(code).toBe(1);
+  });
+});
+
+describe('cli diff with invalid manifests', () => {
+  it('exits 2, the same as any other unusable input', async () => {
+    const { code } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(code).toBe(2);
+  });
+
+  it('produces no drift report at all', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    // A report whose impact section is unreliable is worse than no report:
+    // "0 consumers affected" reads as "safe to ship".
+    expect(stdout).toBe('');
+  });
+
+  it('withholds the report in JSON mode too, where a script would parse it', async () => {
+    const { stdout, code } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--json');
+
+    expect(stdout).toBe('');
+    expect(code).toBe(2);
+  });
+
+  it('reports every problem, not just the first', async () => {
+    const { stderr } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(stderr).toContain('6 problems in consumer manifests');
+  });
+
+  it('names the consumer and the file for each problem', async () => {
+    const { stderr } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(stderr).toContain('typo-path-service');
+    expect(stderr).toContain('bad-path.json');
+    expect(stderr).toContain('uses[0].path: "/petz" is not a path in the spec');
+  });
+
+  it('points at the exact line of a manifest, not just the file', async () => {
+    const { stderr } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(stderr).toContain('uses[0].reads[1]: "nmae" is not in any response of get /pets/{petId}');
+    expect(stderr).toContain('uses[0].method: "put" is not defined on "/pets"');
+  });
+
+  it('groups several problems under the one manifest they came from', async () => {
+    const { stderr } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(stderr).toContain('confused-service');
+    expect(stderr).toContain('uses[0].reads[1]: "colour"');
+    expect(stderr).toContain('uses[2].path: "/nope"');
+  });
+
+  it('says how to get a report anyway', async () => {
+    const { stderr } = await run('diff', OLD, NEW, '--consumers', BAD_CONSUMERS, '--fail-on', 'none');
+
+    expect(stderr).toContain('drop --consumers');
+  });
+
+  it('still diffs the specs when the bad manifests are left out', async () => {
+    const { stdout, code } = await run('diff', OLD, NEW, '--fail-on', 'none');
+
+    expect(stdout).toContain('9 breaking');
+    expect(code).toBe(0);
   });
 });

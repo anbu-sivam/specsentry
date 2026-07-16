@@ -1,0 +1,10 @@
+{
+  "consumer": "typo-path-service",
+  "uses": [
+    {
+      "path": "/petz",
+      "method": "get",
+      "reads": ["id", "name"]
+    }
+  ]
+}
