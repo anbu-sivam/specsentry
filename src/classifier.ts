@@ -16,7 +16,7 @@ const SEVERITY_ORDER: Record<Severity, number> = {
 export function classify(differences: RawDifference[]): ClassifiedDifference[] {
   return differences.map((difference) => {
     const rule = ruleFor(difference.kind);
-    const suggestion = suggestionFor(difference.kind, difference.target);
+    const suggestion = suggestionFor(difference);
     return {
       ...difference,
       severity: rule.severity,

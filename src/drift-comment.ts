@@ -20,12 +20,20 @@ function endpointOf(target: DiffTarget | undefined): string {
     : `${target.method.toUpperCase()} \`${target.path}\``;
 }
 
+/**
+ * What the change landed on, after the endpoint: a body field, or the parameter.
+ * Parameters say so, since a bare name would read as a field.
+ */
+function subjectOf(target: DiffTarget | undefined): string {
+  if (target?.field?.length) return ` \`${target.field.join('.')}\``;
+  if (target?.parameter !== undefined) return ` (parameter \`${target.parameter}\`)`;
+  return '';
+}
+
 function describe(difference: ImpactedDifference, consumersKnown: boolean): string {
   const endpoint = endpointOf(difference.target);
-  const field = difference.target?.field?.length
-    ? ` \`${difference.target.field.join('.')}\``
-    : '';
-  const heading = endpoint === '' ? '`info.version`' : `${endpoint}${field}`;
+  const heading =
+    endpoint === '' ? '`info.version`' : `${endpoint}${subjectOf(difference.target)}`;
 
   const lines = [`- **${heading}**`, `  ${difference.message}`];
   if (difference.consumers.length > 0) {
