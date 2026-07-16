@@ -9,10 +9,10 @@ package and the CLI binary are both `api-contract-drift`.
 
 ## Status
 
-Scaffold only. The pipeline runs end to end, but **`diffSpecs` is a stub** that
-returns a hardcoded list of sample differences — it does not read the specs it
-is handed. The loader, rules table, classifier, and CLI are real. The next task
-is implementing the differ for real.
+Working end to end. Every stage — loader, differ, rules table, classifier, CLI
+— is real. The differ walks both documents and compares them structurally; it
+does not call out to anything, and the same input pair always yields the same
+report.
 
 ## Stack
 
@@ -36,7 +36,7 @@ cli.ts -> index.ts (detectDrift)
 | --- | --- |
 | `src/types.ts` | Shared vocabulary: `DiffKind`, `RawDifference`, `Severity`, `DriftReport`. |
 | `src/loader.ts` | Reads a file, parses it, dereferences `$ref`s. Throws `SpecLoadError`. |
-| `src/differ.ts` | **STUB.** Walks two specs, emits `RawDifference[]`. |
+| `src/differ.ts` | Walks two specs, emits `RawDifference[]`. |
 | `src/classifier.ts` | Looks each difference up in the rules table; also sorts and summarizes. |
 | `src/rules.ts` | The rules table — plain data, the only place severity is decided. |
 | `src/index.ts` | `detectDrift()` orchestration plus the public API surface. |
@@ -56,8 +56,27 @@ loosen it to `Partial<Record<...>>`.
 
 Do not add `if (kind === ...)` branches to `classifier.ts`. If a rule needs
 context the table can't express, that's a signal the differ should emit a more
-specific `DiffKind` (e.g. splitting request vs response) rather than the
-classifier growing logic.
+specific `DiffKind` rather than the classifier growing logic.
+
+### Direction is part of the vocabulary
+
+Schema kinds are split by which side of the wire they sit on: `request.*` for
+anything a client sends, `response.*` for anything it reads. This is the worked
+example of the paragraph above — one structural edit means opposite things to
+the two parties, which is context the table could not express while a single
+`schema.property.removed` covered both.
+
+The payoff is that severities read as plain data. `required.tightened` is
+BREAKING on the request side and NON_BREAKING on the response side; enum
+additions are NON_BREAKING for requests and WARNING for responses. Same edit,
+opposite verdicts, no logic anywhere but the table.
+
+Two consequences worth knowing:
+
+- `param.*` kinds carry no direction because parameters are always request-side.
+- The response side has one `response.property.added` rather than a
+  required/optional pair: a response gaining a field is additive either way, so
+  the distinction the request side needs would be two rules with one severity.
 
 ## Commands
 
@@ -81,29 +100,54 @@ api-contract-drift diff <old> <new> [--json] [--fail-on breaking|warning|none]
 ## Tests
 
 `test/fixtures/petstore-old.yaml` and `petstore-new.yaml` are a drifted pair
-covering roughly a dozen change types — a version bump, an added path, a removed
-method, a tightened param, a removed property, a changed type, an added enum
-value, a deprecation. The header comment in `petstore-new.yaml` lists every
-intended change; **keep it in sync when editing the fixture.** These are the
-cases the real differ should be built against.
+covering eleven change types — a version bump, an added path, a removed method,
+a tightened param, a removed property, a changed type, an added enum value, a
+deprecation. The header comment in `petstore-new.yaml` lists every intended
+change; **keep it in sync when editing the fixture.**
 
-`test/differ.test.ts` currently only asserts the stub's contract (every emitted
-kind exists in `RULES`). It needs real cases once the differ lands.
+The pair is built so `Pet` is only ever returned and `NewPet` only ever sent,
+which is what lets it exercise both directions. Those eleven changes produce
+**17** findings, because `Pet`'s three edits each land on all three endpoints
+that return it. That is intended: each endpoint's contract really did change.
+
+`test/differ.test.ts` pins the full fixture diff as an exact set, then covers
+the rest with hand-built specs: the same edit read from both directions,
+parameter merging, and cyclic schemas.
 
 `test/cli.test.ts` spawns the CLI through `tsx` against source, so it does not
 require a build first.
 
+Tests are **not** typechecked — `tsconfig.json` sets `rootDir: src` and excludes
+`test`. The `Record<DiffKind, Rule>` exhaustiveness that makes a missing rule a
+compile error therefore protects `src/` only; a retired `DiffKind` left in a
+test file surfaces as a runtime failure instead.
+
 ## Known open questions
 
-Recorded while writing the rules table, deferred until the differ is real:
+Settled when the differ landed:
 
-- **Request vs response asymmetry.** Adding a required property breaks
-  *requests*; removing a property breaks *responses*. `schema.property.*` kinds
-  don't currently distinguish direction, so the rules assume the breaking side.
-  Real fix is probably separate kinds per direction.
-- **Enum additions** are additive for requests but can break exhaustive client
-  handling of responses — currently WARNING as a hedge.
+- ~~Request vs response asymmetry~~ — fixed by the direction split above. The
+  rules no longer assume a side.
+- ~~Enum additions hedged to WARNING~~ — now NON_BREAKING for requests, WARNING
+  only for responses, where exhaustive client handling is the real risk.
+
+Still open, and deliberately so:
+
 - **`param.removed`** is WARNING because whether it 400s or is ignored depends
-  on server strictness, which the spec doesn't state.
+  on server strictness, which the spec doesn't state. `request.property.removed`
+  is WARNING for the same reason (`additionalProperties: false` or not).
 - **Type widening** (`integer` -> `number`) is treated as breaking like any
   other type change; could be refined.
+
+Found while implementing, none of them reachable from the fixtures:
+
+- **Composition keywords.** `allOf` / `anyOf` / `oneOf` are not descended into.
+  Matching branches positionally would report false drift when a list is merely
+  reordered, and matching them any other way means guessing. Doing this properly
+  means merging `allOf` before comparing.
+- **Media types** are compared only where both specs have the same one. Dropping
+  `application/json` for `application/xml` is a real break that reports nothing
+  today.
+- **Introducing an enum** where none existed narrows the accepted set, which no
+  current kind names, so it is not reported. Same for removing one entirely.
+- **`requestBody.required`** flipping false -> true is breaking and unreported.

@@ -15,7 +15,7 @@ describe('classify', () => {
 
   it('preserves the raw difference fields', () => {
     const raw: RawDifference[] = [
-      { kind: 'schema.type.changed', location: 'Pet.id', before: 'string', after: 'integer' },
+      { kind: 'response.property.type.changed', location: 'Pet.id', before: 'string', after: 'integer' },
     ];
 
     const [result] = classify(raw);
