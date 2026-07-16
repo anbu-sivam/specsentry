@@ -1,4 +1,5 @@
 import { ruleFor } from './rules.js';
+import { suggestionFor } from './suggestions.js';
 import type { ClassifiedDifference, RawDifference, Severity } from './types.js';
 
 const SEVERITY_ORDER: Record<Severity, number> = {
@@ -8,17 +9,19 @@ const SEVERITY_ORDER: Record<Severity, number> = {
 };
 
 /**
- * Attach a severity and message to each raw difference by looking its kind up
- * in the rules table. All judgement lives in src/rules.ts — this function only
- * performs the lookup, so keep it free of per-kind special cases.
+ * Attach a severity, message and suggestion to each raw difference by looking
+ * its kind up. All judgement lives in src/rules.ts and src/suggestions.ts —
+ * this function only performs the lookups, so keep it free of per-kind cases.
  */
 export function classify(differences: RawDifference[]): ClassifiedDifference[] {
   return differences.map((difference) => {
     const rule = ruleFor(difference.kind);
+    const suggestion = suggestionFor(difference.kind, difference.target);
     return {
       ...difference,
       severity: rule.severity,
       message: rule.message,
+      ...(suggestion === undefined ? {} : { suggestion }),
     };
   });
 }

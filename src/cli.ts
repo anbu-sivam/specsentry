@@ -10,12 +10,43 @@ import type { ManifestProblem } from './validate.js';
 import type { DriftReport, Severity } from './types.js';
 
 const SEVERITY_LABEL: Record<Severity, string> = {
-  BREAKING: 'BREAKING    ',
-  WARNING: 'WARNING     ',
+  BREAKING: 'BREAKING',
+  WARNING: 'WARNING',
   NON_BREAKING: 'NON_BREAKING',
 };
 
-function renderText(report: DriftReport): string {
+/** SGR colours, written out rather than pulled in: the only colour library in
+ *  the tree arrives under vitest, which consumers of this package never install. */
+const SEVERITY_COLOUR: Record<Severity, string> = {
+  BREAKING: '31',
+  WARNING: '33',
+  NON_BREAKING: '90',
+};
+
+/** Built rather than typed: a literal escape byte is invisible in a source file. */
+const ESC = String.fromCharCode(27);
+
+const LABEL_WIDTH = Math.max(...Object.values(SEVERITY_LABEL).map((label) => label.length));
+/** Continuation lines sit under the location, clear of the severity column. */
+const INDENT = ' '.repeat(LABEL_WIDTH + 2);
+const DETAIL_WIDTH = Math.max(...['Affected', 'Suggest'].map((label) => label.length)) + 2;
+
+/** Plain text unless a terminal is watching. Honours https://no-color.org.
+ *  Read per call rather than at import so tests can drive both branches. */
+function colourful(): boolean {
+  return process.stdout.isTTY === true && process.env.NO_COLOR === undefined;
+}
+
+function paint(text: string, code: string): string {
+  return colourful() ? `${ESC}[${code}m${text}${ESC}[0m` : text;
+}
+
+function detail(label: string, value: string): string {
+  return `${INDENT}${`${label}:`.padEnd(DETAIL_WIDTH)}${value}`;
+}
+
+/** Exported for tests; the CLI itself calls it below. */
+export function renderText(report: DriftReport): string {
   const lines: string[] = [];
   lines.push(`old: ${report.oldSource}`);
   lines.push(`new: ${report.newSource}`);
@@ -28,13 +59,19 @@ function renderText(report: DriftReport): string {
     lines.push('No differences found.');
   } else {
     for (const difference of report.differences) {
-      lines.push(`${SEVERITY_LABEL[difference.severity]}  ${difference.location}`);
-      lines.push(`              ${difference.message}`);
+      // Pad before painting: the escape codes are invisible but still count
+      // towards a string's length.
+      const label = SEVERITY_LABEL[difference.severity].padEnd(LABEL_WIDTH);
+      lines.push(`${paint(label, SEVERITY_COLOUR[difference.severity])}  ${difference.location}`);
+      lines.push(`${INDENT}${difference.message}`);
       if (difference.consumers.length > 0) {
-        lines.push(`              Affected: ${difference.consumers.join(', ')}`);
+        lines.push(detail('Affected', difference.consumers.join(', ')));
       }
+      if (difference.suggestion !== undefined) {
+        lines.push(detail('Suggest', difference.suggestion));
+      }
+      lines.push('');
     }
-    lines.push('');
   }
 
   const { BREAKING, WARNING, NON_BREAKING } = report.summary;

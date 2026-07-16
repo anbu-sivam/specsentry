@@ -1,7 +1,10 @@
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { renderText } from '../src/cli.js';
+import { detectDrift } from '../src/index.js';
+import type { DriftReport } from '../src/types.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +15,10 @@ const OLD = repoUrl('./fixtures/petstore-old.yaml');
 const NEW = repoUrl('./fixtures/petstore-new.yaml');
 const CONSUMERS = repoUrl('./fixtures/consumers');
 const BAD_CONSUMERS = repoUrl('./fixtures/consumers-invalid');
+
+/** Built rather than typed: a literal escape byte is invisible in a source file. */
+const ESC = String.fromCharCode(27);
+const STRIP_COLOUR = new RegExp(`${ESC}\\[\\d+m`, 'g');
 
 interface Run {
   stdout: string;
@@ -69,6 +76,77 @@ describe('cli diff', () => {
 
     expect(stderr).toContain('Invalid --fail-on value');
     expect(code).toBe(2);
+  });
+
+  it('suggests a fix under a breaking change', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--fail-on', 'none');
+
+    expect(stdout).toContain(
+      'Suggest:  Add `species` as optional with a server-side default, and require it once senders have migrated.',
+    );
+  });
+
+  it('lines the detail values up under each other', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--fail-on', 'none');
+    const details = stdout.split('\n').filter((line) => /^\s+(Affected|Suggest):/.test(line));
+
+    expect(details.length).toBeGreaterThan(1);
+    const valueColumns = new Set(details.map((line) => line.search(/(?<=:\s+)\S/)));
+    expect(valueColumns.size).toBe(1);
+  });
+
+  it('writes no colour when stdout is not a terminal', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--fail-on', 'none');
+
+    expect(stdout).not.toContain(ESC);
+  });
+});
+
+describe('renderText colour', () => {
+  let report: DriftReport;
+  const wasTTY = process.stdout.isTTY;
+  const wasNoColor = process.env.NO_COLOR;
+
+  beforeAll(async () => {
+    report = await detectDrift(OLD, NEW);
+  });
+
+  afterEach(() => {
+    process.stdout.isTTY = wasTTY;
+    if (wasNoColor === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = wasNoColor;
+  });
+
+  it('paints each severity its own colour for a terminal', () => {
+    process.stdout.isTTY = true;
+    delete process.env.NO_COLOR;
+
+    const text = renderText(report);
+
+    expect(text).toContain(`${ESC}[31mBREAKING    ${ESC}[0m`);
+    expect(text).toContain(`${ESC}[33mWARNING     ${ESC}[0m`);
+    expect(text).toContain(`${ESC}[90mNON_BREAKING${ESC}[0m`);
+  });
+
+  it('pads the label before painting, so escapes do not eat the column', () => {
+    process.stdout.isTTY = true;
+    delete process.env.NO_COLOR;
+
+    const columns = renderText(report)
+      .split('\n')
+      .filter((line) => line.startsWith(ESC))
+      .map((line) => line.replace(STRIP_COLOUR, '').indexOf('paths.'));
+
+    // Every location starts in the same column once the invisible escapes are
+    // stripped, whatever the severity name's length.
+    expect(new Set(columns.filter((column) => column > 0)).size).toBe(1);
+  });
+
+  it('stays plain when NO_COLOR is set, terminal or not', () => {
+    process.stdout.isTTY = true;
+    process.env.NO_COLOR = '1';
+
+    expect(renderText(report)).not.toContain(ESC);
   });
 });
 
