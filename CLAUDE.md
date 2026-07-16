@@ -48,6 +48,7 @@ cli.ts -> index.ts (detectDrift)
 | `src/rules.ts` | The rules table — plain data, the only place a kind is judged. |
 | `src/index.ts` | `detectDrift()` orchestration plus the public API surface. |
 | `src/cli.ts` | Commander entrypoint, text/JSON rendering, exit codes. |
+| `src/drift-comment.ts` | Renders a report as the PR comment body for the drift workflow. Lives here, not beside the workflow, so it is typechecked and testable; the workflow runs the built `dist/drift-comment.js`. |
 
 `openapi.ts` exists so the differ and the validator cannot disagree about what a
 schema is. A field the validator rejects is one the impact layer could never

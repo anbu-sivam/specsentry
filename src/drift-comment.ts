@@ -1,27 +1,26 @@
-#!/usr/bin/env node
+import { readFileSync, realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
+import type { DiffTarget, DriftReport, ImpactedDifference } from './types.js';
+
 /**
- * Render a drift report as the body of a pull request comment.
+ * Renders a drift report as the body of a pull request comment, for
+ * .github/workflows/api-contract-drift.yml.
  *
- * Split out of the workflow so it can be run against a saved report and eyeballed:
- *   node .github/scripts/drift-comment.mjs report.json
- *
- * Reads `target` rather than parsing `location`: the location string is built
- * for humans and cannot be taken apart reliably, while target carries the path,
- * method and field as data.
+ * Lives in src/ rather than beside the workflow so it is typechecked against
+ * DriftReport and reachable from the test suite.
  */
-import { readFileSync } from 'node:fs';
 
-/** Lets the workflow find its own previous comment instead of posting a new one each push. */
-const MARKER = '<!-- api-contract-drift -->';
+/** Lets the workflow find its own previous comment and edit it. Kept in sync by a test. */
+export const COMMENT_MARKER = '<!-- api-contract-drift -->';
 
-function endpointOf(target) {
+function endpointOf(target: DiffTarget | undefined): string {
   if (target?.path === undefined) return '';
   return target.method === undefined
     ? `\`${target.path}\``
     : `${target.method.toUpperCase()} \`${target.path}\``;
 }
 
-function describe(difference, consumersKnown) {
+function describe(difference: ImpactedDifference, consumersKnown: boolean): string {
   const endpoint = endpointOf(difference.target);
   const field = difference.target?.field?.length
     ? ` \`${difference.target.field.join('.')}\``
@@ -37,11 +36,15 @@ function describe(difference, consumersKnown) {
   return lines.join('\n');
 }
 
-function render(report, specPath) {
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+export function renderDriftComment(report: DriftReport, specPath: string): string {
   const consumersKnown = report.knownConsumers !== undefined;
   const breaking = report.differences.filter((d) => d.severity === 'BREAKING');
   const warnings = report.differences.filter((d) => d.severity === 'WARNING');
-  const lines = [MARKER];
+  const lines = [COMMENT_MARKER];
 
   if (breaking.length === 0) {
     lines.push('## No breaking API changes');
@@ -49,15 +52,14 @@ function render(report, specPath) {
     lines.push(`\`${specPath}\` has no changes that break existing callers.`);
     if (warnings.length > 0) {
       lines.push('');
-      lines.push(`${warnings.length} warning${warnings.length === 1 ? '' : 's'}:`);
+      lines.push(`${plural(warnings.length, 'warning')}:`);
       lines.push('');
       lines.push(warnings.map((d) => describe(d, consumersKnown)).join('\n'));
     }
     return lines.join('\n');
   }
 
-  const noun = breaking.length === 1 ? 'breaking change' : 'breaking changes';
-  lines.push(`## ${breaking.length} ${noun} in \`${specPath}\``);
+  lines.push(`## ${plural(breaking.length, 'breaking change')} in \`${specPath}\``);
   lines.push('');
   lines.push('These break services that call this API as it exists on the base branch.');
   lines.push('');
@@ -66,7 +68,7 @@ function render(report, specPath) {
   if (warnings.length > 0) {
     lines.push('');
     lines.push('<details>');
-    lines.push(`<summary>${warnings.length} warning${warnings.length === 1 ? '' : 's'}</summary>`);
+    lines.push(`<summary>${plural(warnings.length, 'warning')}</summary>`);
     lines.push('');
     lines.push(warnings.map((d) => describe(d, consumersKnown)).join('\n'));
     lines.push('');
@@ -77,7 +79,7 @@ function render(report, specPath) {
   const { BREAKING, WARNING, NON_BREAKING } = report.summary;
   lines.push(`${BREAKING} breaking, ${WARNING} warning, ${NON_BREAKING} non-breaking.`);
   lines.push(
-    consumersKnown
+    consumersKnown && report.knownConsumers !== undefined
       ? `Consumers checked: ${report.knownConsumers.join(', ')}. A manifest set is what is known, not proof of who else calls this.`
       : 'No consumer manifests were given, so nobody is named above.',
   );
@@ -85,10 +87,24 @@ function render(report, specPath) {
   return lines.join('\n');
 }
 
-const [reportPath, specPath = 'the spec'] = process.argv.slice(2);
-if (reportPath === undefined) {
-  console.error('usage: drift-comment.mjs <report.json> [spec-path]');
-  process.exit(1);
+/** Only auto-run when invoked as the entrypoint, so tests can import the renderer. */
+function isMain(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    return false;
+  }
 }
 
-process.stdout.write(`${render(JSON.parse(readFileSync(reportPath, 'utf8')), specPath)}\n`);
+if (isMain()) {
+  const [reportPath, specPath = 'the spec'] = process.argv.slice(2);
+  if (reportPath === undefined) {
+    console.error('usage: drift-comment.js <report.json> [spec-path]');
+    process.exitCode = 1;
+  } else {
+    const report = JSON.parse(readFileSync(reportPath, 'utf8')) as DriftReport;
+    process.stdout.write(`${renderDriftComment(report, specPath)}\n`);
+  }
+}

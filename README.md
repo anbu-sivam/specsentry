@@ -279,7 +279,7 @@ the services you told it about; it cannot tell you about the ones you forgot.
 ## Development
 
 ```bash
-npm test          # vitest, 110 tests
+npm test          # vitest
 npm run typecheck # src and test files
 npm run build     # tsc -> dist/
 ```
