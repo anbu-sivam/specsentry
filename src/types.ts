@@ -94,6 +94,15 @@ export interface DiffTarget {
   /** Templated exactly as the spec writes it: "/pets/{petId}". */
   path?: string;
   method?: HttpMethod;
+  /**
+   * The parameter a change lands on or inside, for `param.*` kinds and for
+   * anything found within a parameter's own schema.
+   *
+   * Separate from `field` because a parameter is addressed by name, not by a
+   * path into a body — and `field` is what impact.ts matches against a
+   * manifest's `reads`/`sends`, which only ever name body fields.
+   */
+  parameter?: string;
   direction?: Direction;
   /**
    * Property names from the payload root down to what changed, as a client

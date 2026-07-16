@@ -96,10 +96,17 @@ Two consequences worth knowing:
 ### Migration suggestions
 
 Each BREAKING finding carries a `suggestion`: what to do about it, named for the
-field or endpoint that moved. `src/suggestions.ts` holds them as
-`Record<DiffKind, Suggest>`, where `Suggest` is `(target) => string` or `null`.
-The classifier attaches it exactly as it attaches `severity`, so the CLI, the
-JSON report and the PR comment all get it for free.
+field, parameter, enum value or endpoint that moved. `src/suggestions.ts` holds
+them as `Record<DiffKind, Suggest>`, where `Suggest` is
+`(difference) => string` or `null`. The classifier attaches it exactly as it
+attaches `severity`, so the CLI, the JSON report and the PR comment all get it
+for free.
+
+A template takes the whole `RawDifference`, not just its target, because
+`before`/`after` hold the enum value that changed and are shaped per kind. That
+is safe to read *here and only here*: every entry in the table already knows
+which kind it was written for. Nothing else may read `before`/`after`
+structurally — elsewhere they are display-only and typed `unknown`.
 
 **Why not in `RULES`, given it is per-kind judgement like severity and impact.**
 `RULES` is constants — the table you open to retune a severity. Suggestions are
@@ -213,6 +220,15 @@ It is absent inside parameter schemas, which have no body field to name; a
 field-scoped finding with no field falls back to endpoint attribution rather than
 reporting a breaking change as hitting nobody.
 
+`target.parameter` is the parameter a change lands on or inside. It is a
+separate field rather than reusing `field` because impact.ts matches `field`
+against a manifest's `reads`/`sends`, which only ever name body fields — a
+parameter name in there would be matched against the wrong thing. It exists
+because the name is genuinely unrecoverable otherwise: `location` cannot be
+parsed back, and `before`/`after` carry it only for `param.added.*` and
+`param.removed`. For `param.required.tightened` they are the booleans `false`
+and `true`, and for `param.type.changed` the two type names — no name in sight.
+
 ## Commands
 
 ```bash
@@ -324,13 +340,20 @@ On the consumer layer:
 - **`reads` is checked against every response status, not the one meant.** A
   field that exists only on the 404 body validates when read from the 200.
   Manifests don't name statuses, so tightening this means extending the format.
-- **Enum values aren't declared, only fields.** `request.enum.value.removed`
-  therefore implicates every sender of the field, not only those sending the
-  dropped value. Over-reports, deliberately.
-- **A parameter's inner schema has no field to name**, so a field-scoped finding
-  there falls back to endpoint attribution. Reached only by object-schema params
-  (`deepObject`), which the fixtures don't cover. Proper fix is probably
-  `param.enum.*` kinds rather than reusing `request.enum.*`.
+- ~~Suggestions and the PR comment can't name the parameter or the enum value~~
+  — `target.parameter` now carries the name, and enum templates read the value
+  off `before`/`after`, where the differ has always put it. Both renderers say
+  which one moved.
+- **Enum values still aren't *declared* in manifests, only fields.** This is
+  about attribution, not naming: `request.enum.value.removed` implicates every
+  sender of the field rather than only those sending the dropped value, even
+  though the message now names that value. Over-reports, deliberately.
+- **A parameter's inner schema still has no field to name**, so a field-scoped
+  finding there still falls back to endpoint *attribution* — a manifest can't
+  declare a path into a parameter. Only the naming half of this is fixed.
+  Reached only by object-schema params (`deepObject`), which the fixtures don't
+  cover. Proper fix is probably `param.enum.*` kinds rather than reusing
+  `request.enum.*`.
 
 Found while implementing, none of them reachable from the fixtures:
 

@@ -41,10 +41,18 @@ interface SchemaWalk {
   path: string;
   method: HttpMethod;
   field?: string[];
+  /** Set only while walking inside a parameter's own schema. */
+  parameter?: string;
 }
 
 function targetOf(walk: SchemaWalk): DiffTarget {
-  return { path: walk.path, method: walk.method, direction: walk.direction, field: walk.field };
+  return {
+    path: walk.path,
+    method: walk.method,
+    parameter: walk.parameter,
+    direction: walk.direction,
+    field: walk.field,
+  };
 }
 
 function intoProperty(walk: SchemaWalk, name: string): SchemaWalk {
@@ -266,6 +274,11 @@ function endpointTarget(endpoint: Endpoint): DiffTarget {
   return { path: endpoint.path, method: endpoint.method };
 }
 
+/** The endpoint plus the parameter's own name, which `location` alone cannot yield back. */
+function parameterTarget(endpoint: Endpoint, parameter: ParameterObject): DiffTarget {
+  return { path: endpoint.path, method: endpoint.method, parameter: parameter.name };
+}
+
 function compareParameters(
   beforePathItem: PathItemObject,
   afterPathItem: PathItemObject,
@@ -282,7 +295,7 @@ function compareParameters(
     differences.push({
       kind: 'param.removed',
       location: parameterLocation(endpoint, parameter),
-      target: endpointTarget(endpoint),
+      target: parameterTarget(endpoint, parameter),
       before: describeParameter(parameter),
     });
   }
@@ -292,7 +305,7 @@ function compareParameters(
     differences.push({
       kind: parameter.required === true ? 'param.added.required' : 'param.added.optional',
       location: parameterLocation(endpoint, parameter),
-      target: endpointTarget(endpoint),
+      target: parameterTarget(endpoint, parameter),
       after: describeParameter(parameter),
     });
   }
@@ -308,7 +321,7 @@ function compareParameters(
       differences.push({
         kind: isRequired ? 'param.required.tightened' : 'param.required.loosened',
         location,
-        target: endpointTarget(endpoint),
+        target: parameterTarget(endpoint, afterParameter),
         before: wasRequired,
         after: isRequired,
       });
@@ -321,7 +334,13 @@ function compareParameters(
         ...compareSchema(
           beforeSchema as SchemaObject,
           afterSchema as SchemaObject,
-          { location, direction: 'request', path: endpoint.path, method: endpoint.method },
+          {
+            location,
+            direction: 'request',
+            path: endpoint.path,
+            method: endpoint.method,
+            parameter: afterParameter.name,
+          },
           new Set(),
           'param.type.changed',
         ),

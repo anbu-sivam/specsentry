@@ -70,6 +70,29 @@ describe('renderDriftComment on a breaking report', () => {
     );
   });
 
+  it('says which parameter changed, not just which endpoint', () => {
+    const body = renderDriftComment(drifted, 'spec.yaml');
+
+    expect(body).toContain('- **GET `/pets` (parameter `limit`)**');
+    // The heading used to stop at the endpoint, leaving the reader to guess.
+    expect(body).not.toContain('- **GET `/pets`**\n  Parameter changed');
+  });
+
+  it('marks a parameter as one, so it does not read as a body field', () => {
+    const body = renderDriftComment(drifted, 'spec.yaml');
+
+    expect(body).toContain('(parameter `limit`)');
+    expect(body).toContain('- **POST `/pets` `species`**');
+  });
+
+  it('names the parameter in the suggestion too', () => {
+    const body = renderDriftComment(drifted, 'spec.yaml');
+
+    expect(body).toContain(
+      '_Suggest: Keep `limit` optional and default it server-side; require it only in a new API version._',
+    );
+  });
+
   it('suggests nothing under a warning', () => {
     const body = renderDriftComment(drifted, 'spec.yaml');
     const deprecation = body.slice(body.indexOf('Operation marked deprecated'));

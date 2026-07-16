@@ -121,14 +121,14 @@ describe('diffSpecs against the petstore fixtures', () => {
     });
   });
 
-  it('leaves parameter findings without a field, having no body field to name', async () => {
+  it('names the parameter, and gives it no field, having no body field to name', async () => {
     const [oldSpec, newSpec] = await loadFixturePair();
 
     const [limit] = diffSpecs(oldSpec, newSpec).filter(
       (d) => d.location === 'paths./pets.get.parameters.query.limit',
     );
 
-    expect(limit?.target).toEqual({ path: '/pets', method: 'get' });
+    expect(limit?.target).toEqual({ path: '/pets', method: 'get', parameter: 'limit' });
   });
 
   it('gives every endpoint change a target the cross-reference can match', async () => {
@@ -321,7 +321,13 @@ describe('parameters', () => {
       {
         kind: 'param.type.changed',
         location: 'paths./thing.get.parameters.query.limit',
-        target: { path: '/thing', method: 'get', direction: 'request', field: undefined },
+        target: {
+          path: '/thing',
+          method: 'get',
+          parameter: 'limit',
+          direction: 'request',
+          field: undefined,
+        },
         before: 'string',
         after: 'integer',
       },
@@ -337,6 +343,20 @@ describe('parameters', () => {
     expect(differences.map((d) => d.kind)).toEqual(['request.enum.value.added']);
   });
 
+  it('carries the parameter name into findings from its own schema', () => {
+    const differences = diffSpecs(
+      spec(withParams([{ name: 'sort', in: 'query', schema: { type: 'string', enum: ['asc', 'desc'] } }])),
+      spec(withParams([{ name: 'sort', in: 'query', schema: { type: 'string', enum: ['asc'] } }])),
+    );
+
+    // The value dropped is on `before`, where every enum finding carries it.
+    expect(differences[0]).toMatchObject({
+      kind: 'request.enum.value.removed',
+      target: { parameter: 'sort' },
+      before: 'desc',
+    });
+  });
+
   it('merges path-level parameters into each operation', () => {
     const before = spec({
       '/thing': { parameters: [{ name: 'tenant', in: 'query', required: false, schema: { type: 'string' } }], get: { responses: {} } },
@@ -349,7 +369,7 @@ describe('parameters', () => {
       {
         kind: 'param.required.tightened',
         location: 'paths./thing.get.parameters.query.tenant',
-        target: { path: '/thing', method: 'get' },
+        target: { path: '/thing', method: 'get', parameter: 'tenant' },
         before: false,
         after: true,
       },
@@ -370,7 +390,7 @@ describe('parameters', () => {
       {
         kind: 'param.required.loosened',
         location: 'paths./thing.get.parameters.query.tenant',
-        target: { path: '/thing', method: 'get' },
+        target: { path: '/thing', method: 'get', parameter: 'tenant' },
         before: true,
         after: false,
       },

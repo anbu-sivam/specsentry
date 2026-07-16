@@ -57,9 +57,18 @@ WARNING       paths./pets/{petId}.get
 Severities are coloured when writing to a terminal, and plain when piped or when
 `NO_COLOR` is set.
 
-Every breaking change carries a `Suggest:` line naming the field or endpoint
-involved. The advice is a fixed template per kind of change, not generated prose,
-so the same break always gets the same recommendation. It leans on deprecation
+Every breaking change carries a `Suggest:` line naming whatever moved — the
+field, the parameter, the enum value, or the endpoint:
+
+```
+BREAKING      paths./pets.get.parameters.query.limit
+              Parameter changed from optional to required; requests omitting it will fail.
+              Affected: inventory-service
+              Suggest:  Keep `limit` optional and default it server-side; require it only in a new API version.
+```
+
+The advice is a fixed template per kind of change, not generated prose, so the
+same break always gets the same recommendation. It leans on deprecation
 throughout, which assumes you have somewhere to move the break to — a new API
 version — and can hold a compatibility shim for a cycle. If neither is true, the
 advice is worth less to you.
