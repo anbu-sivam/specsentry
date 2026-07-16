@@ -30,21 +30,31 @@ export type DiffKind =
   | 'path.removed'
   | 'method.added'
   | 'method.removed'
-  // parameters
+  // parameters — always request-side, so they need no direction suffix
   | 'param.added.required'
   | 'param.added.optional'
   | 'param.removed'
   | 'param.required.tightened'
   | 'param.required.loosened'
   | 'param.type.changed'
-  // request / response schemas
-  | 'schema.property.added.required'
-  | 'schema.property.added.optional'
-  | 'schema.property.removed'
-  | 'schema.type.changed'
-  | 'schema.enum.value.added'
-  | 'schema.enum.value.removed'
-  // responses
+  // request body schemas — the client writes these, the server validates them
+  | 'request.property.added.required'
+  | 'request.property.added.optional'
+  | 'request.property.removed'
+  | 'request.property.required.tightened'
+  | 'request.property.required.loosened'
+  | 'request.property.type.changed'
+  | 'request.enum.value.added'
+  | 'request.enum.value.removed'
+  // response schemas — the server writes these, the client reads them
+  | 'response.property.added'
+  | 'response.property.removed'
+  | 'response.property.required.tightened'
+  | 'response.property.required.loosened'
+  | 'response.property.type.changed'
+  | 'response.enum.value.added'
+  | 'response.enum.value.removed'
+  // response surface
   | 'response.status.added'
   | 'response.status.removed'
   // metadata
@@ -57,11 +67,15 @@ export type DiffLocation = string;
 /** A single structural difference, before any judgement is applied. */
 export interface RawDifference {
   kind: DiffKind;
-  /** e.g. "paths./users/{id}.get.parameters.limit" */
+  /** e.g. "paths./users/{id}.get.parameters.query.limit" */
   location: DiffLocation;
-  /** Value in the old spec, if the change has one. */
+  /**
+   * The old and new values, when the change has them. These are deliberately
+   * scalars or small literals rather than the spec nodes themselves: a
+   * dereferenced schema can be cyclic, and the CLI serialises this report with
+   * JSON.stringify.
+   */
   before?: unknown;
-  /** Value in the new spec, if the change has one. */
   after?: unknown;
 }
 

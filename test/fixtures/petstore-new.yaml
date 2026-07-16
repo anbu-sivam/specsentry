@@ -1,16 +1,20 @@
 # Deliberately drifted from petstore-old.yaml. Each change below is a case the
-# differ must eventually catch — keep this list in sync when editing:
-#   info.version.changed          1.0.0 -> 2.0.0
-#   path.added                    /health
-#   method.removed                delete /pets/{petId}
-#   param.required.tightened      /pets get: limit is now required
-#   param.added.optional          /pets get: sort
-#   operation.deprecated          /pets/{petId} get
-#   response.status.added         /pets get: 429
-#   schema.property.removed       Pet.tag
-#   schema.type.changed           Pet.id string -> integer
-#   schema.enum.value.added       Pet.status: adopted
-#   schema.property.added.required NewPet.species
+# differ must catch — keep this list in sync when editing:
+#   info.version.changed             1.0.0 -> 2.0.0
+#   path.added                       /health
+#   method.removed                   delete /pets/{petId}
+#   param.required.tightened         /pets get: limit is now required
+#   param.added.optional             /pets get: sort
+#   operation.deprecated             /pets/{petId} get
+#   response.status.added            /pets get: 429
+#   response.property.removed        Pet.tag
+#   response.property.type.changed   Pet.id string -> integer
+#   response.enum.value.added        Pet.status: adopted
+#   request.property.added.required  NewPet.species
+#
+# Pet is only ever returned and NewPet is only ever sent, which is what makes
+# this pair exercise both directions. Pet's three edits each land on all three
+# endpoints that return it, so the diff is 17 findings, not 11.
 openapi: 3.0.3
 info:
   title: Petstore

@@ -68,41 +68,88 @@ export const RULES: Record<DiffKind, Rule> = {
   'param.type.changed': {
     severity: 'BREAKING',
     message: 'Parameter type changed; existing requests may no longer validate.',
-    rationale:
-      'Assumed breaking regardless of direction. Widening cases (integer -> number) could be refined later.',
+    rationale: 'Assumed breaking. Widening cases (integer -> number) could be refined later.',
   },
 
-  'schema.property.added.required': {
+  'request.property.added.required': {
     severity: 'BREAKING',
     message: 'New required property in request body; existing payloads will be rejected.',
-    rationale:
-      'Breaking on the request side. If the differ later distinguishes response schemas, that direction is additive and needs its own kind.',
+    rationale: 'Old clients cannot know to send it.',
   },
-  'schema.property.added.optional': {
+  'request.property.added.optional': {
     severity: 'NON_BREAKING',
-    message: 'New optional property; existing payloads remain valid.',
+    message: 'New optional property in request body; existing payloads remain valid.',
     rationale: 'Additive and defaulted.',
   },
-  'schema.property.removed': {
-    severity: 'BREAKING',
-    message: 'Property removed; clients reading it will find it missing.',
-    rationale: 'Breaking on the response side, where consumers depend on the field.',
-  },
-  'schema.type.changed': {
-    severity: 'BREAKING',
-    message: 'Property type changed; clients will mis-parse this field.',
-    rationale: 'Assumed breaking in either direction.',
-  },
-  'schema.enum.value.added': {
+  'request.property.removed': {
     severity: 'WARNING',
-    message: 'New enum value; clients with exhaustive handling may not recognise it.',
+    message: 'Property removed from request body; clients still sending it may be ignored or rejected.',
     rationale:
-      'Additive for requests, potentially breaking for responses if clients switch exhaustively. Flagged rather than judged.',
+      'Same unknowable as param.removed — ignored under permissive parsing, 400 when additionalProperties is false. The spec does not say which.',
   },
-  'schema.enum.value.removed': {
+  'request.property.required.tightened': {
     severity: 'BREAKING',
-    message: 'Enum value removed; requests sending it will be rejected.',
+    message: 'Request property changed from optional to required; payloads omitting it will fail.',
+    rationale: 'Same reasoning as a new required property.',
+  },
+  'request.property.required.loosened': {
+    severity: 'NON_BREAKING',
+    message: 'Request property changed from required to optional; existing payloads remain valid.',
+    rationale: 'Relaxing an input constraint accepts a superset of before.',
+  },
+  'request.property.type.changed': {
+    severity: 'BREAKING',
+    message: 'Request property type changed; existing payloads may no longer validate.',
+    rationale: 'Assumed breaking. Widening cases (integer -> number) could be refined later.',
+  },
+  'request.enum.value.added': {
+    severity: 'NON_BREAKING',
+    message: 'New value accepted for a request enum; existing payloads remain valid.',
+    rationale: 'The server accepts a superset of what it did before.',
+  },
+  'request.enum.value.removed': {
+    severity: 'BREAKING',
+    message: 'Value no longer accepted for a request enum; clients sending it will be rejected.',
     rationale: 'Narrows the accepted input set.',
+  },
+
+  'response.property.added': {
+    severity: 'NON_BREAKING',
+    message: 'New property in response; existing clients ignore fields they do not read.',
+    rationale:
+      'Additive whether or not the server marks it required — required on a response is a guarantee of presence, and a new guarantee breaks nobody. This is why the response side needs no required/optional split.',
+  },
+  'response.property.removed': {
+    severity: 'BREAKING',
+    message: 'Property removed from response; clients reading it will find it missing.',
+    rationale: 'Consumers depend on the field being there.',
+  },
+  'response.property.required.tightened': {
+    severity: 'NON_BREAKING',
+    message: 'Response property is now always present; clients already handled it appearing.',
+    rationale: 'A strengthened guarantee. The mirror of the request side, where tightening breaks.',
+  },
+  'response.property.required.loosened': {
+    severity: 'BREAKING',
+    message: 'Response property is no longer guaranteed; clients reading it unconditionally will break.',
+    rationale:
+      'The server may now omit it. Generated clients turn this into an optional field, which breaks consumers at compile time.',
+  },
+  'response.property.type.changed': {
+    severity: 'BREAKING',
+    message: 'Response property type changed; clients will mis-parse this field.',
+    rationale: 'Assumed breaking. Widening cases (integer -> number) could be refined later.',
+  },
+  'response.enum.value.added': {
+    severity: 'WARNING',
+    message: 'New value returned for a response enum; clients with exhaustive handling may not recognise it.',
+    rationale:
+      'Safe for clients that pass the value through, breaking for those that switch exhaustively. Not knowable from the spec, so it is flagged rather than judged.',
+  },
+  'response.enum.value.removed': {
+    severity: 'NON_BREAKING',
+    message: 'Value no longer returned for a response enum; clients handling it keep working.',
+    rationale: 'The server emits a subset of what clients already accept.',
   },
 
   'response.status.added': {
