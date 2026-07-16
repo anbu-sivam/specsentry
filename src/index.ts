@@ -1,24 +1,48 @@
 import { classify, sortBySeverity, summarize } from './classifier.js';
+import { loadConsumerManifests } from './consumers.js';
 import { diffSpecs } from './differ.js';
+import { attributeConsumers } from './impact.js';
 import { loadSpec } from './loader.js';
-import type { DriftReport } from './types.js';
+import type { ConsumerManifest, DriftReport } from './types.js';
 
-/** Full pipeline: load both specs, diff them, classify the result. */
-export async function detectDrift(oldPath: string, newPath: string): Promise<DriftReport> {
-  const [oldSpec, newSpec] = await Promise.all([loadSpec(oldPath), loadSpec(newPath)]);
-  const differences = sortBySeverity(classify(diffSpecs(oldSpec, newSpec)));
+export interface DetectDriftOptions {
+  /** Directory of consumer manifests. Without it, no impact is attributed. */
+  consumersDir?: string;
+}
+
+/** Full pipeline: load both specs, diff them, classify, then attribute impact. */
+export async function detectDrift(
+  oldPath: string,
+  newPath: string,
+  options: DetectDriftOptions = {},
+): Promise<DriftReport> {
+  const [oldSpec, newSpec, manifests] = await Promise.all([
+    loadSpec(oldPath),
+    loadSpec(newPath),
+    options.consumersDir === undefined
+      ? Promise.resolve<ConsumerManifest[] | undefined>(undefined)
+      : loadConsumerManifests(options.consumersDir),
+  ]);
+
+  const classified = classify(diffSpecs(oldSpec, newSpec));
+  const differences = sortBySeverity(attributeConsumers(classified, manifests ?? []));
 
   return {
     oldSource: oldSpec.source,
     newSource: newSpec.source,
+    ...(manifests === undefined
+      ? {}
+      : { knownConsumers: manifests.map((manifest) => manifest.consumer).sort() }),
     differences,
     summary: summarize(differences),
   };
 }
 
 export { classify, sortBySeverity, summarize } from './classifier.js';
+export { loadConsumerManifests, ManifestLoadError } from './consumers.js';
 export { diffSpecs } from './differ.js';
+export { attributeConsumers } from './impact.js';
 export { loadSpec, SpecLoadError } from './loader.js';
 export { RULES, ruleFor } from './rules.js';
-export type { Rule } from './rules.js';
+export type { ImpactScope, Rule } from './rules.js';
 export type * from './types.js';

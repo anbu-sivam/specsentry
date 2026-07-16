@@ -24,7 +24,7 @@ export function classify(differences: RawDifference[]): ClassifiedDifference[] {
 }
 
 /** Most severe first, then by location, so output is stable across runs. */
-export function sortBySeverity(differences: ClassifiedDifference[]): ClassifiedDifference[] {
+export function sortBySeverity<T extends ClassifiedDifference>(differences: T[]): T[] {
   return [...differences].sort((a, b) => {
     const bySeverity = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
     return bySeverity !== 0 ? bySeverity : a.location.localeCompare(b.location);

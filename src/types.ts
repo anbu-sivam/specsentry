@@ -3,6 +3,23 @@
  *   loader -> differ -> classifier -> cli
  */
 
+/** Operation keys of a Path Item Object, per OpenAPI 3.x. */
+export const HTTP_METHODS = [
+  'get',
+  'put',
+  'post',
+  'delete',
+  'options',
+  'head',
+  'patch',
+  'trace',
+] as const;
+
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+/** Which side of the wire something sits on: clients send requests, read responses. */
+export type Direction = 'request' | 'response';
+
 /** A dereferenced OpenAPI 3.x document. Loosely typed for now. */
 export interface OpenApiSpec {
   openapi: string;
@@ -64,11 +81,36 @@ export type DiffKind =
 /** Where in the spec a change occurred, as a JSON-pointer-ish path. */
 export type DiffLocation = string;
 
+/**
+ * The same place as `location`, in parts rather than flattened.
+ *
+ * `location` is for humans and cannot be reliably parsed back: `properties` and
+ * `items` are legal property names, and a path may contain dots, so the string
+ * is ambiguous about which segment is what. Anything that needs to reason about
+ * where a change landed — the consumer cross-reference does — reads this
+ * instead of taking the string apart.
+ */
+export interface DiffTarget {
+  /** Templated exactly as the spec writes it: "/pets/{petId}". */
+  path?: string;
+  method?: HttpMethod;
+  direction?: Direction;
+  /**
+   * Property names from the payload root down to what changed, as a client
+   * would address them in JSON: array hops are elided, because `items` is how
+   * the document nests and not part of any field name. Absent inside parameter
+   * schemas, which have no body field to name.
+   */
+  field?: string[];
+}
+
 /** A single structural difference, before any judgement is applied. */
 export interface RawDifference {
   kind: DiffKind;
   /** e.g. "paths./users/{id}.get.parameters.query.limit" */
   location: DiffLocation;
+  /** Absent only for changes that belong to no endpoint, e.g. info.version. */
+  target?: DiffTarget;
   /**
    * The old and new values, when the change has them. These are deliberately
    * scalars or small literals rather than the spec nodes themselves: a
@@ -88,9 +130,39 @@ export interface ClassifiedDifference extends RawDifference {
   message: string;
 }
 
+/** What one consumer service declares it uses of one endpoint. */
+export interface ConsumerUsage {
+  path: string;
+  method: HttpMethod;
+  /** Response fields this consumer reads, dotted for nesting: "owner.name". */
+  reads: string[];
+  /** Request body fields this consumer sends. */
+  sends: string[];
+}
+
+export interface ConsumerManifest {
+  /** Service name, as reported. Unique across a loaded set. */
+  consumer: string;
+  /** Absolute path the manifest was read from. */
+  source: string;
+  uses: ConsumerUsage[];
+}
+
+/** A classified difference plus the consumers that declared use of what moved. */
+export interface ImpactedDifference extends ClassifiedDifference {
+  /** Sorted, and empty when no loaded manifest is affected. */
+  consumers: string[];
+}
+
 export interface DriftReport {
   oldSource: string;
   newSource: string;
-  differences: ClassifiedDifference[];
+  /**
+   * Every consumer whose manifest was loaded, affected or not. Absent when no
+   * manifest directory was given, which is what separates "nobody uses this"
+   * from "nobody told us who uses this".
+   */
+  knownConsumers?: string[];
+  differences: ImpactedDifference[];
   summary: Record<Severity, number>;
 }

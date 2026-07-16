@@ -1,18 +1,12 @@
-import type { DiffKind, LoadedSpec, RawDifference } from './types.js';
-
-/** Operation keys of a Path Item Object, per OpenAPI 3.x. */
-const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace'] as const;
-
-/**
- * Which side of the wire a schema sits on.
- *
- * This is the axis the schema kinds are split along. A client writes requests
- * and reads responses, so one structural edit lands on opposite parties
- * depending on where it happens: adding a required field breaks senders,
- * removing a field breaks readers. The walker carries the direction so it can
- * name which side moved; rules.ts alone decides what that costs.
- */
-type Direction = 'request' | 'response';
+import { HTTP_METHODS } from './types.js';
+import type {
+  DiffKind,
+  DiffTarget,
+  Direction,
+  HttpMethod,
+  LoadedSpec,
+  RawDifference,
+} from './types.js';
 
 interface SchemaObject {
   type?: string | string[];
@@ -50,6 +44,31 @@ interface PathItemObject {
   [key: string]: unknown;
 }
 
+/** One operation, and the location prefix every finding under it extends. */
+interface Endpoint {
+  path: string;
+  method: HttpMethod;
+  location: string;
+}
+
+/**
+ * Where the schema walk currently is, in both of the forms a finding needs: the
+ * human-readable `location` and the structured parts of its `DiffTarget`.
+ *
+ * They diverge, which is the reason for carrying both. `items` deepens the
+ * location but not the field path, since the array hop is how the document
+ * nests rather than something a client names. And `field` is undefined inside a
+ * parameter's schema: a parameter has no body field, so findings there stay
+ * endpoint-level rather than pointing at a property nobody can declare.
+ */
+interface SchemaWalk {
+  location: string;
+  direction: Direction;
+  path: string;
+  method: HttpMethod;
+  field?: string[];
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -85,6 +104,18 @@ function mediaTypesOf(body: BodyObject | undefined): string[] {
   return isRecord(body?.content) ? Object.keys(body.content) : [];
 }
 
+function targetOf(walk: SchemaWalk): DiffTarget {
+  return { path: walk.path, method: walk.method, direction: walk.direction, field: walk.field };
+}
+
+function intoProperty(walk: SchemaWalk, name: string): SchemaWalk {
+  return {
+    ...walk,
+    location: `${walk.location}.properties.${name}`,
+    field: walk.field === undefined ? undefined : [...walk.field, name],
+  };
+}
+
 /**
  * Adding a property to a response is additive whether or not it is required,
  * so the response side collapses to one kind while the request side keeps the
@@ -112,8 +143,7 @@ function propertyAddedKind(direction: Direction, requiredInNew: boolean): DiffKi
 function compareSchema(
   before: SchemaObject,
   after: SchemaObject,
-  location: string,
-  direction: Direction,
+  walk: SchemaWalk,
   ancestors: Set<SchemaObject>,
   rootTypeKind?: DiffKind,
 ): RawDifference[] {
@@ -127,23 +157,23 @@ function compareSchema(
     const afterType = typeOf(after);
     if (beforeType !== afterType) {
       differences.push({
-        kind: rootTypeKind ?? `${direction}.property.type.changed`,
-        location,
+        kind: rootTypeKind ?? `${walk.direction}.property.type.changed`,
+        location: walk.location,
+        target: targetOf(walk),
         before: beforeType,
         after: afterType,
       });
     }
 
-    differences.push(...compareEnumValues(before, after, location, direction));
-    differences.push(...compareProperties(before, after, location, direction, ancestors));
+    differences.push(...compareEnumValues(before, after, walk));
+    differences.push(...compareProperties(before, after, walk, ancestors));
 
     if (isRecord(before.items) && isRecord(after.items)) {
       differences.push(
         ...compareSchema(
           before.items as SchemaObject,
           after.items as SchemaObject,
-          `${location}.items`,
-          direction,
+          { ...walk, location: `${walk.location}.items` },
           ancestors,
         ),
       );
@@ -163,8 +193,7 @@ function compareSchema(
 function compareEnumValues(
   before: SchemaObject,
   after: SchemaObject,
-  location: string,
-  direction: Direction,
+  walk: SchemaWalk,
 ): RawDifference[] {
   if (!Array.isArray(before.enum) || !Array.isArray(after.enum)) return [];
 
@@ -175,12 +204,22 @@ function compareEnumValues(
 
   for (const [key, value] of beforeValues) {
     if (!afterValues.has(key)) {
-      differences.push({ kind: `${direction}.enum.value.removed`, location, before: value });
+      differences.push({
+        kind: `${walk.direction}.enum.value.removed`,
+        location: walk.location,
+        target: targetOf(walk),
+        before: value,
+      });
     }
   }
   for (const [key, value] of afterValues) {
     if (!beforeValues.has(key)) {
-      differences.push({ kind: `${direction}.enum.value.added`, location, after: value });
+      differences.push({
+        kind: `${walk.direction}.enum.value.added`,
+        location: walk.location,
+        target: targetOf(walk),
+        after: value,
+      });
     }
   }
 
@@ -190,8 +229,7 @@ function compareEnumValues(
 function compareProperties(
   before: SchemaObject,
   after: SchemaObject,
-  location: string,
-  direction: Direction,
+  walk: SchemaWalk,
   ancestors: Set<SchemaObject>,
 ): RawDifference[] {
   const beforeProps = propertiesOf(before);
@@ -202,18 +240,22 @@ function compareProperties(
 
   for (const [name, schema] of Object.entries(beforeProps)) {
     if (name in afterProps) continue;
+    const removed = intoProperty(walk, name);
     differences.push({
-      kind: `${direction}.property.removed`,
-      location: `${location}.properties.${name}`,
+      kind: `${walk.direction}.property.removed`,
+      location: removed.location,
+      target: targetOf(removed),
       before: typeOf(schema),
     });
   }
 
   for (const [name, schema] of Object.entries(afterProps)) {
     if (name in beforeProps) continue;
+    const added = intoProperty(walk, name);
     differences.push({
-      kind: propertyAddedKind(direction, afterRequired.has(name)),
-      location: `${location}.properties.${name}`,
+      kind: propertyAddedKind(walk.direction, afterRequired.has(name)),
+      location: added.location,
+      target: targetOf(added),
       after: typeOf(schema),
     });
   }
@@ -222,23 +264,22 @@ function compareProperties(
     const afterSchema = afterProps[name];
     if (afterSchema === undefined) continue;
 
-    const propertyLocation = `${location}.properties.${name}`;
+    const property = intoProperty(walk, name);
     const wasRequired = beforeRequired.has(name);
     const isRequired = afterRequired.has(name);
     if (wasRequired !== isRequired) {
       differences.push({
         kind: isRequired
-          ? `${direction}.property.required.tightened`
-          : `${direction}.property.required.loosened`,
-        location: propertyLocation,
+          ? `${walk.direction}.property.required.tightened`
+          : `${walk.direction}.property.required.loosened`,
+        location: property.location,
+        target: targetOf(property),
         before: wasRequired,
         after: isRequired,
       });
     }
 
-    differences.push(
-      ...compareSchema(beforeSchema, afterSchema, propertyLocation, direction, ancestors),
-    );
+    differences.push(...compareSchema(beforeSchema, afterSchema, property, ancestors));
   }
 
   return differences;
@@ -278,8 +319,12 @@ function describeParameter(parameter: ParameterObject): Record<string, unknown> 
   };
 }
 
-function parameterLocation(operationLocation: string, parameter: ParameterObject): string {
-  return `${operationLocation}.parameters.${parameter.in ?? 'query'}.${parameter.name ?? ''}`;
+function parameterLocation(endpoint: Endpoint, parameter: ParameterObject): string {
+  return `${endpoint.location}.parameters.${parameter.in ?? 'query'}.${parameter.name ?? ''}`;
+}
+
+function endpointTarget(endpoint: Endpoint): DiffTarget {
+  return { path: endpoint.path, method: endpoint.method };
 }
 
 function compareParameters(
@@ -287,7 +332,7 @@ function compareParameters(
   afterPathItem: PathItemObject,
   beforeOperation: OperationObject,
   afterOperation: OperationObject,
-  operationLocation: string,
+  endpoint: Endpoint,
 ): RawDifference[] {
   const before = effectiveParameters(beforePathItem, beforeOperation);
   const after = effectiveParameters(afterPathItem, afterOperation);
@@ -297,7 +342,8 @@ function compareParameters(
     if (after.has(key)) continue;
     differences.push({
       kind: 'param.removed',
-      location: parameterLocation(operationLocation, parameter),
+      location: parameterLocation(endpoint, parameter),
+      target: endpointTarget(endpoint),
       before: describeParameter(parameter),
     });
   }
@@ -306,7 +352,8 @@ function compareParameters(
     if (before.has(key)) continue;
     differences.push({
       kind: parameter.required === true ? 'param.added.required' : 'param.added.optional',
-      location: parameterLocation(operationLocation, parameter),
+      location: parameterLocation(endpoint, parameter),
+      target: endpointTarget(endpoint),
       after: describeParameter(parameter),
     });
   }
@@ -315,13 +362,14 @@ function compareParameters(
     const afterParameter = after.get(key);
     if (afterParameter === undefined) continue;
 
-    const location = parameterLocation(operationLocation, afterParameter);
+    const location = parameterLocation(endpoint, afterParameter);
     const wasRequired = beforeParameter.required === true;
     const isRequired = afterParameter.required === true;
     if (wasRequired !== isRequired) {
       differences.push({
         kind: isRequired ? 'param.required.tightened' : 'param.required.loosened',
         location,
+        target: endpointTarget(endpoint),
         before: wasRequired,
         after: isRequired,
       });
@@ -334,8 +382,7 @@ function compareParameters(
         ...compareSchema(
           beforeSchema as SchemaObject,
           afterSchema as SchemaObject,
-          location,
-          'request',
+          { location, direction: 'request', path: endpoint.path, method: endpoint.method },
           new Set(),
           'param.type.changed',
         ),
@@ -349,7 +396,7 @@ function compareParameters(
 function compareRequestBody(
   beforeOperation: OperationObject,
   afterOperation: OperationObject,
-  operationLocation: string,
+  endpoint: Endpoint,
 ): RawDifference[] {
   const before = beforeOperation.requestBody;
   const after = afterOperation.requestBody;
@@ -365,8 +412,13 @@ function compareRequestBody(
       ...compareSchema(
         beforeSchema,
         afterSchema,
-        `${operationLocation}.requestBody.content.${mediaType}.schema`,
-        'request',
+        {
+          location: `${endpoint.location}.requestBody.content.${mediaType}.schema`,
+          direction: 'request',
+          path: endpoint.path,
+          method: endpoint.method,
+          field: [],
+        },
         new Set(),
       ),
     );
@@ -377,7 +429,7 @@ function compareRequestBody(
 function compareResponses(
   beforeOperation: OperationObject,
   afterOperation: OperationObject,
-  operationLocation: string,
+  endpoint: Endpoint,
 ): RawDifference[] {
   const before = isRecord(beforeOperation.responses) ? beforeOperation.responses : {};
   const after = isRecord(afterOperation.responses) ? afterOperation.responses : {};
@@ -387,7 +439,8 @@ function compareResponses(
     if (status in after) continue;
     differences.push({
       kind: 'response.status.removed',
-      location: `${operationLocation}.responses.${status}`,
+      location: `${endpoint.location}.responses.${status}`,
+      target: endpointTarget(endpoint),
       before: status,
     });
   }
@@ -396,7 +449,8 @@ function compareResponses(
     if (status in before) continue;
     differences.push({
       kind: 'response.status.added',
-      location: `${operationLocation}.responses.${status}`,
+      location: `${endpoint.location}.responses.${status}`,
+      target: endpointTarget(endpoint),
       after: status,
     });
   }
@@ -415,8 +469,13 @@ function compareResponses(
         ...compareSchema(
           beforeSchema,
           afterSchema,
-          `${operationLocation}.responses.${status}.content.${mediaType}.schema`,
-          'response',
+          {
+            location: `${endpoint.location}.responses.${status}.content.${mediaType}.schema`,
+            direction: 'response',
+            path: endpoint.path,
+            method: endpoint.method,
+            field: [],
+          },
           new Set(),
         ),
       );
@@ -431,36 +490,31 @@ function compareOperation(
   afterPathItem: PathItemObject,
   beforeOperation: OperationObject,
   afterOperation: OperationObject,
-  operationLocation: string,
+  endpoint: Endpoint,
 ): RawDifference[] {
   const differences: RawDifference[] = [];
 
   if (beforeOperation.deprecated !== true && afterOperation.deprecated === true) {
     differences.push({
       kind: 'operation.deprecated',
-      location: operationLocation,
+      location: endpoint.location,
+      target: endpointTarget(endpoint),
       before: false,
       after: true,
     });
   }
 
   differences.push(
-    ...compareParameters(
-      beforePathItem,
-      afterPathItem,
-      beforeOperation,
-      afterOperation,
-      operationLocation,
-    ),
-    ...compareRequestBody(beforeOperation, afterOperation, operationLocation),
-    ...compareResponses(beforeOperation, afterOperation, operationLocation),
+    ...compareParameters(beforePathItem, afterPathItem, beforeOperation, afterOperation, endpoint),
+    ...compareRequestBody(beforeOperation, afterOperation, endpoint),
+    ...compareResponses(beforeOperation, afterOperation, endpoint),
   );
 
   return differences;
 }
 
-function operationsOf(pathItem: PathItemObject): Map<string, OperationObject> {
-  const operations = new Map<string, OperationObject>();
+function operationsOf(pathItem: PathItemObject): Map<HttpMethod, OperationObject> {
+  const operations = new Map<HttpMethod, OperationObject>();
   for (const method of HTTP_METHODS) {
     const operation = pathItem[method];
     if (isRecord(operation)) operations.set(method, operation as OperationObject);
@@ -488,6 +542,7 @@ function comparePaths(
     differences.push({
       kind: 'path.removed',
       location: `paths.${path}`,
+      target: { path },
       before: { methods: methodNamesOf(beforePaths[path] as PathItemObject) },
     });
   }
@@ -497,6 +552,7 @@ function comparePaths(
     differences.push({
       kind: 'path.added',
       location: `paths.${path}`,
+      target: { path },
       after: { methods: methodNamesOf(afterPaths[path] as PathItemObject) },
     });
   }
@@ -514,6 +570,7 @@ function comparePaths(
       differences.push({
         kind: 'method.removed',
         location: `paths.${path}.${method}`,
+        target: { path, method },
         before: { operationId: operation.operationId },
       });
     }
@@ -523,6 +580,7 @@ function comparePaths(
       differences.push({
         kind: 'method.added',
         location: `paths.${path}.${method}`,
+        target: { path, method },
         after: { operationId: operation.operationId },
       });
     }
@@ -531,13 +589,11 @@ function comparePaths(
       const afterOperation = afterOperations.get(method);
       if (afterOperation === undefined) continue;
       differences.push(
-        ...compareOperation(
-          beforePathItem,
-          afterPathItem,
-          beforeOperation,
-          afterOperation,
-          `paths.${path}.${method}`,
-        ),
+        ...compareOperation(beforePathItem, afterPathItem, beforeOperation, afterOperation, {
+          path,
+          method,
+          location: `paths.${path}.${method}`,
+        }),
       );
     }
   }

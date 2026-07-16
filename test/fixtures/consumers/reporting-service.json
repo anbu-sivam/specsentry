@@ -1,0 +1,10 @@
+{
+  "consumer": "reporting-service",
+  "uses": [
+    {
+      "path": "/pets/{petId}",
+      "method": "get",
+      "reads": ["name"]
+    }
+  ]
+}

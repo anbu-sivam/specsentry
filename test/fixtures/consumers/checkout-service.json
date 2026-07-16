@@ -1,0 +1,14 @@
+{
+  "consumer": "checkout-service",
+  "uses": [
+    {
+      "path": "/pets/{petId}",
+      "method": "get",
+      "reads": ["id", "name", "tag"]
+    },
+    {
+      "path": "/pets/{petId}",
+      "method": "delete"
+    }
+  ]
+}

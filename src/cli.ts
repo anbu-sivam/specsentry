@@ -2,6 +2,7 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
+import { ManifestLoadError } from './consumers.js';
 import { detectDrift } from './index.js';
 import { SpecLoadError } from './loader.js';
 import type { DriftReport, Severity } from './types.js';
@@ -16,6 +17,9 @@ function renderText(report: DriftReport): string {
   const lines: string[] = [];
   lines.push(`old: ${report.oldSource}`);
   lines.push(`new: ${report.newSource}`);
+  if (report.knownConsumers !== undefined) {
+    lines.push(`consumers: ${report.knownConsumers.join(', ') || 'none declared'}`);
+  }
   lines.push('');
 
   if (report.differences.length === 0) {
@@ -24,6 +28,9 @@ function renderText(report: DriftReport): string {
     for (const difference of report.differences) {
       lines.push(`${SEVERITY_LABEL[difference.severity]}  ${difference.location}`);
       lines.push(`              ${difference.message}`);
+      if (difference.consumers.length > 0) {
+        lines.push(`              Affected: ${difference.consumers.join(', ')}`);
+      }
     }
     lines.push('');
   }
@@ -48,39 +55,51 @@ export function buildProgram(): Command {
     .argument('<new>', 'path to the new OpenAPI spec (YAML or JSON)')
     .option('--json', 'emit the report as JSON instead of text', false)
     .option(
+      '--consumers <dir>',
+      'directory of consumer manifests; names which services each change affects',
+    )
+    .option(
       '--fail-on <severity>',
       'exit non-zero when a change at or above this severity is found: breaking | warning | none',
       'breaking',
     )
-    .action(async (oldPath: string, newPath: string, options: { json: boolean; failOn: string }) => {
-      const failOn = options.failOn.toLowerCase();
-      if (!['breaking', 'warning', 'none'].includes(failOn)) {
-        console.error(`Invalid --fail-on value: ${options.failOn} (expected breaking, warning, or none)`);
-        process.exitCode = 2;
-        return;
-      }
-
-      let report: DriftReport;
-      try {
-        report = await detectDrift(oldPath, newPath);
-      } catch (error) {
-        if (error instanceof SpecLoadError) {
-          console.error(error.message);
+    .action(
+      async (
+        oldPath: string,
+        newPath: string,
+        options: { json: boolean; failOn: string; consumers?: string },
+      ) => {
+        const failOn = options.failOn.toLowerCase();
+        if (!['breaking', 'warning', 'none'].includes(failOn)) {
+          console.error(
+            `Invalid --fail-on value: ${options.failOn} (expected breaking, warning, or none)`,
+          );
           process.exitCode = 2;
           return;
         }
-        throw error;
-      }
 
-      console.log(options.json ? JSON.stringify(report, null, 2) : renderText(report));
+        let report: DriftReport;
+        try {
+          report = await detectDrift(oldPath, newPath, { consumersDir: options.consumers });
+        } catch (error) {
+          if (error instanceof SpecLoadError || error instanceof ManifestLoadError) {
+            console.error(error.message);
+            process.exitCode = 2;
+            return;
+          }
+          throw error;
+        }
 
-      const tripped =
-        (failOn === 'breaking' && report.summary.BREAKING > 0) ||
-        (failOn === 'warning' && report.summary.BREAKING + report.summary.WARNING > 0);
-      if (tripped) {
-        process.exitCode = 1;
-      }
-    });
+        console.log(options.json ? JSON.stringify(report, null, 2) : renderText(report));
+
+        const tripped =
+          (failOn === 'breaking' && report.summary.BREAKING > 0) ||
+          (failOn === 'warning' && report.summary.BREAKING + report.summary.WARNING > 0);
+        if (tripped) {
+          process.exitCode = 1;
+        }
+      },
+    );
 
   return program;
 }
