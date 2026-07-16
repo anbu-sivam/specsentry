@@ -33,6 +33,9 @@ function describe(difference: ImpactedDifference, consumersKnown: boolean): stri
   } else if (consumersKnown) {
     lines.push('  No declared consumer.');
   }
+  if (difference.suggestion !== undefined) {
+    lines.push(`  _Suggest: ${difference.suggestion}_`);
+  }
   return lines.join('\n');
 }
 

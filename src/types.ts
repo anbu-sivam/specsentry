@@ -128,6 +128,8 @@ export interface ClassifiedDifference extends RawDifference {
   severity: Severity;
   /** Human-readable explanation, sourced from the rule. */
   message: string;
+  /** How to fix or soften the break, from src/suggestions.ts. Absent when the kind has no advice. */
+  suggestion?: string;
 }
 
 /** What one consumer service declares it uses of one endpoint. */

@@ -62,6 +62,21 @@ describe('renderDriftComment on a breaking report', () => {
     expect(body).toContain('Affects: **checkout-service**, **reporting-service**');
   });
 
+  it('suggests a fix under a breaking change', () => {
+    const body = renderDriftComment(drifted, 'spec.yaml');
+
+    expect(body).toContain(
+      '  _Suggest: Add `species` as optional with a server-side default, and require it once senders have migrated._',
+    );
+  });
+
+  it('suggests nothing under a warning', () => {
+    const body = renderDriftComment(drifted, 'spec.yaml');
+    const deprecation = body.slice(body.indexOf('Operation marked deprecated'));
+
+    expect(deprecation.split('\n')[1]).not.toContain('_Suggest:');
+  });
+
   it('folds warnings away behind a summary', () => {
     const body = renderDriftComment(drifted, 'spec.yaml');
 

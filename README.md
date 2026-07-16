@@ -33,23 +33,36 @@ old: test/fixtures/petstore-old.yaml
 new: test/fixtures/petstore-new.yaml
 consumers: checkout-service, inventory-service, reporting-service
 
-BREAKING      paths./pets.get.parameters.query.limit
-              Parameter changed from optional to required; requests omitting it will fail.
-              Affected: inventory-service
 BREAKING      paths./pets.get.responses.200.content.application/json.schema.items.properties.tag
               Property removed from response; clients reading it will find it missing.
+              Suggest:  Keep returning `tag` for a deprecation cycle, then drop it in a new API version.
+
 BREAKING      paths./pets.post.requestBody.content.application/json.schema.properties.species
               New required property in request body; existing payloads will be rejected.
               Affected: inventory-service
+              Suggest:  Add `species` as optional with a server-side default, and require it once senders have migrated.
+
 BREAKING      paths./pets/{petId}.delete
               Method removed from an existing path; calls will fail.
               Affected: checkout-service
+              Suggest:  Restore DELETE /pets/{petId} and mark it deprecated, or move the removal to a new API version.
+
 WARNING       paths./pets/{petId}.get
               Operation marked deprecated; still works but is scheduled for removal.
               Affected: checkout-service, reporting-service
 
 9 breaking, 4 warning, 4 non-breaking
 ```
+
+Severities are coloured when writing to a terminal, and plain when piped or when
+`NO_COLOR` is set.
+
+Every breaking change carries a `Suggest:` line naming the field or endpoint
+involved. The advice is a fixed template per kind of change, not generated prose,
+so the same break always gets the same recommendation. It leans on deprecation
+throughout, which assumes you have somewhere to move the break to — a new API
+version — and can hold a compatibility shim for a cycle. If neither is true, the
+advice is worth less to you.
 
 Three things in that output are worth pointing out.
 

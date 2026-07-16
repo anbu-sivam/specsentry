@@ -45,7 +45,8 @@ cli.ts -> index.ts (detectDrift)
 | `src/consumers.ts` | Reads `*.json` manifests from a directory. Throws `ManifestLoadError`. |
 | `src/validate.ts` | Checks each manifest's claims against the old spec. Throws `ManifestValidationError`. |
 | `src/impact.ts` | Cross-references differences against manifests, naming affected consumers. |
-| `src/rules.ts` | The rules table — plain data, the only place a kind is judged. |
+| `src/rules.ts` | The rules table — plain data: severity and impact scope per kind. |
+| `src/suggestions.ts` | What to do about each kind, as templates over its `DiffTarget`. |
 | `src/index.ts` | `detectDrift()` orchestration plus the public API surface. |
 | `src/cli.ts` | Commander entrypoint, text/JSON rendering, exit codes. |
 | `src/drift-comment.ts` | Renders a report as the PR comment body for the drift workflow. Lives here, not beside the workflow, so it is typechecked and testable; the workflow runs the built `dist/drift-comment.js`. |
@@ -91,6 +92,35 @@ Two consequences worth knowing:
 - The response side has one `response.property.added` rather than a
   required/optional pair: a response gaining a field is additive either way, so
   the distinction the request side needs would be two rules with one severity.
+
+### Migration suggestions
+
+Each BREAKING finding carries a `suggestion`: what to do about it, named for the
+field or endpoint that moved. `src/suggestions.ts` holds them as
+`Record<DiffKind, Suggest>`, where `Suggest` is `(target) => string` or `null`.
+The classifier attaches it exactly as it attaches `severity`, so the CLI, the
+JSON report and the PR comment all get it for free.
+
+**Why not in `RULES`, given it is per-kind judgement like severity and impact.**
+`RULES` is constants — the table you open to retune a severity. Suggestions are
+functions of a target, and 16 of the 29 kinds need none. Folding them in would
+triple that table and bury severity under `suggest: null` noise. The
+exhaustiveness that matters is kept: `Record<DiffKind, Suggest>` still forces a
+new kind to decide, and `null` is spelled out rather than omitted.
+
+This is the arguable one. It splits per-kind judgement across two tables, which
+is exactly the thing the rules table exists to avoid. The counter is that the
+two are read by different people at different times.
+
+Only BREAKING kinds carry advice. Several WARNING kinds could — `param.removed`
+and `operation.deprecated` both have obvious answers — and adding them is a
+one-line change each, since both renderers print a suggestion whenever one is
+present. It was left out because the ask was breaking changes.
+
+The advice itself is a judgement call throughout, and mostly the same call:
+**deprecate rather than break.** It assumes a new API version is available to
+move the break into, and that the server can hold a compatibility shim for a
+cycle. Neither is true everywhere.
 
 ### Consumer impact
 
