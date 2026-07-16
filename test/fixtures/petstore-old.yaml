@@ -81,8 +81,6 @@ components:
           type: string
         name:
           type: string
-        tag:
-          type: string
         status:
           type: string
           enum:
