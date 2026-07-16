@@ -1,0 +1,16 @@
+{
+  "consumer": "inventory-service",
+  "uses": [
+    {
+      "path": "/pets",
+      "method": "get",
+      "reads": ["id", "status"]
+    },
+    {
+      "path": "/pets",
+      "method": "post",
+      "sends": ["name"],
+      "reads": ["id"]
+    }
+  ]
+}

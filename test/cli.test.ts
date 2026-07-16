@@ -10,6 +10,7 @@ const TSX = repoUrl('../node_modules/tsx/dist/cli.mjs');
 const CLI = repoUrl('../src/cli.ts');
 const OLD = repoUrl('./fixtures/petstore-old.yaml');
 const NEW = repoUrl('./fixtures/petstore-new.yaml');
+const CONSUMERS = repoUrl('./fixtures/consumers');
 
 interface Run {
   stdout: string;
@@ -67,5 +68,64 @@ describe('cli diff', () => {
 
     expect(stderr).toContain('Invalid --fail-on value');
     expect(code).toBe(2);
+  });
+});
+
+describe('cli diff --consumers', () => {
+  it('names the affected service under a breaking change', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--fail-on', 'none');
+
+    expect(stdout).toContain('Affected: checkout-service');
+    expect(stdout).toContain('properties.species');
+  });
+
+  it('lists the consumers it loaded, so an empty result is legible', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--fail-on', 'none');
+
+    expect(stdout).toContain('consumers: checkout-service, inventory-service, reporting-service');
+  });
+
+  it('says nothing about consumers when no manifests are given', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--fail-on', 'none');
+
+    expect(stdout).not.toContain('Affected:');
+    expect(stdout).not.toContain('consumers:');
+  });
+
+  it('carries the impact into the JSON report', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--json', '--fail-on', 'none');
+    const report = JSON.parse(stdout);
+
+    expect(report.knownConsumers).toEqual([
+      'checkout-service',
+      'inventory-service',
+      'reporting-service',
+    ]);
+
+    const species = report.differences.find((d: { location: string }) =>
+      d.location.endsWith('properties.species'),
+    );
+    expect(species.consumers).toEqual(['inventory-service']);
+  });
+
+  it('omits knownConsumers entirely when no manifests are given', async () => {
+    const { stdout } = await run('diff', OLD, NEW, '--json', '--fail-on', 'none');
+    const report = JSON.parse(stdout);
+
+    expect(report).not.toHaveProperty('knownConsumers');
+    expect(report.differences.every((d: { consumers: string[] }) => d.consumers.length === 0)).toBe(true);
+  });
+
+  it('exits 2 with a readable message when the consumers directory is missing', async () => {
+    const { stderr, code } = await run('diff', OLD, NEW, '--consumers', repoUrl('./fixtures/nope'));
+
+    expect(stderr).toContain('Could not read consumers directory');
+    expect(code).toBe(2);
+  });
+
+  it('leaves exit codes to severity, not to who is affected', async () => {
+    const { code } = await run('diff', OLD, NEW, '--consumers', CONSUMERS, '--fail-on', 'breaking');
+
+    expect(code).toBe(1);
   });
 });

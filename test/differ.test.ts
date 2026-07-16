@@ -81,6 +81,68 @@ describe('diffSpecs against the petstore fixtures', () => {
     expect(change).toMatchObject({ before: 'string', after: 'integer' });
   });
 
+  it('names the endpoint and field of a response change in its target', async () => {
+    const [oldSpec, newSpec] = await loadFixturePair();
+
+    const [tag] = diffSpecs(oldSpec, newSpec).filter(
+      (d) => d.location === 'paths./pets/{petId}.get.responses.200.content.application/json.schema.properties.tag',
+    );
+
+    expect(tag?.target).toEqual({
+      path: '/pets/{petId}',
+      method: 'get',
+      direction: 'response',
+      field: ['tag'],
+    });
+  });
+
+  it('elides the array hop from the field path but not the location', async () => {
+    const [oldSpec, newSpec] = await loadFixturePair();
+
+    // /pets returns an array of Pet. A client addresses the field as `tag`;
+    // only the document nests it under `items`.
+    const [tag] = diffSpecs(oldSpec, newSpec).filter(
+      (d) => d.location === 'paths./pets.get.responses.200.content.application/json.schema.items.properties.tag',
+    );
+
+    expect(tag?.target?.field).toEqual(['tag']);
+  });
+
+  it('gives a request body change the request direction', async () => {
+    const [oldSpec, newSpec] = await loadFixturePair();
+
+    const [species] = diffSpecs(oldSpec, newSpec).filter((d) => d.location.endsWith('properties.species'));
+
+    expect(species?.target).toEqual({
+      path: '/pets',
+      method: 'post',
+      direction: 'request',
+      field: ['species'],
+    });
+  });
+
+  it('leaves parameter findings without a field, having no body field to name', async () => {
+    const [oldSpec, newSpec] = await loadFixturePair();
+
+    const [limit] = diffSpecs(oldSpec, newSpec).filter(
+      (d) => d.location === 'paths./pets.get.parameters.query.limit',
+    );
+
+    expect(limit?.target).toEqual({ path: '/pets', method: 'get' });
+  });
+
+  it('gives every endpoint change a target the cross-reference can match', async () => {
+    const [oldSpec, newSpec] = await loadFixturePair();
+
+    for (const difference of diffSpecs(oldSpec, newSpec)) {
+      if (difference.location === 'info.version') {
+        expect(difference.target).toBeUndefined();
+        continue;
+      }
+      expect(difference.target?.path, difference.location).toBeDefined();
+    }
+  });
+
   it('emits only kinds the rules table can classify', async () => {
     const [oldSpec, newSpec] = await loadFixturePair();
 
@@ -193,7 +255,12 @@ describe('endpoint surface', () => {
     const differences = diffSpecs(before, spec({}));
 
     expect(differences).toEqual([
-      { kind: 'path.removed', location: 'paths./gone', before: { methods: ['get'] } },
+      {
+        kind: 'path.removed',
+        location: 'paths./gone',
+        target: { path: '/gone' },
+        before: { methods: ['get'] },
+      },
     ]);
   });
 
@@ -207,7 +274,12 @@ describe('endpoint surface', () => {
     const differences = diffSpecs(spec({ '/thing': { get: {}, delete: operation } }), spec({ '/thing': { get: {} } }));
 
     expect(differences).toEqual([
-      { kind: 'method.removed', location: 'paths./thing.delete', before: { operationId: 'drop' } },
+      {
+        kind: 'method.removed',
+        location: 'paths./thing.delete',
+        target: { path: '/thing', method: 'delete' },
+        before: { operationId: 'drop' },
+      },
     ]);
   });
 
@@ -249,6 +321,7 @@ describe('parameters', () => {
       {
         kind: 'param.type.changed',
         location: 'paths./thing.get.parameters.query.limit',
+        target: { path: '/thing', method: 'get', direction: 'request', field: undefined },
         before: 'string',
         after: 'integer',
       },
@@ -276,6 +349,7 @@ describe('parameters', () => {
       {
         kind: 'param.required.tightened',
         location: 'paths./thing.get.parameters.query.tenant',
+        target: { path: '/thing', method: 'get' },
         before: false,
         after: true,
       },
@@ -296,6 +370,7 @@ describe('parameters', () => {
       {
         kind: 'param.required.loosened',
         location: 'paths./thing.get.parameters.query.tenant',
+        target: { path: '/thing', method: 'get' },
         before: true,
         after: false,
       },
