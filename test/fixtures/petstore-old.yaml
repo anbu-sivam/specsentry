@@ -82,11 +82,7 @@ components:
         name:
           type: string
         status:
-          type: string
-          enum:
-            - available
-            - pending
-            - sold
+          type: integer
     NewPet:
       type: object
       required:
