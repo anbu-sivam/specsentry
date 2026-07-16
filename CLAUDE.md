@@ -253,10 +253,12 @@ silently.
 `test/cli.test.ts` spawns the CLI through `tsx` against source, so it does not
 require a build first.
 
-Tests are **not** typechecked — `tsconfig.json` sets `rootDir: src` and excludes
-`test`. The `Record<DiffKind, Rule>` exhaustiveness that makes a missing rule a
-compile error therefore protects `src/` only; a retired `DiffKind` left in a
-test file surfaces as a runtime failure instead.
+Tests are typechecked, but not by `npm run build`. `tsconfig.json` has to keep
+`rootDir: src` to emit `dist/` in the right shape, so `tsconfig.test.json`
+extends it with `noEmit` and widens `include` to cover `test/` as well.
+`npm run typecheck` runs both, and CI runs that. The `Record<DiffKind, Rule>`
+exhaustiveness therefore reaches test files: a retired `DiffKind` in a test is a
+compile error, not a runtime surprise.
 
 ## Known open questions
 

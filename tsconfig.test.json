@@ -1,0 +1,14 @@
+{
+  // Typecheck only. tsconfig.json builds src/ -> dist/ and must keep
+  // rootDir: "src" for that layout, which is why tests can't just be added to
+  // its `include` — they need a config that emits nothing.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -1,0 +1,144 @@
+# Diffs this repo's OpenAPI spec across a pull request and comments when the
+# change breaks existing callers.
+#
+# POINTED AT A FIXTURE. This repository has no API of its own, so SPEC_PATH is a
+# test fixture and the workflow is a demonstration: edit
+# test/fixtures/petstore-old.yaml in a pull request and it will report what that
+# edit breaks. A real integration points SPEC_PATH at the API's actual spec and
+# CONSUMERS_DIR at its manifests. Nothing else needs changing.
+#
+# petstore-old.yaml is the spec here, not petstore-new.yaml, because "old" and
+# "new" name the two halves of the test fixture pair, not this workflow's before
+# and after. petstore-old.yaml is the contract the manifests in
+# test/fixtures/consumers/ actually describe, which makes it the current one;
+# base-vs-head supplies the before and after by itself.
+name: API contract drift
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  SPEC_PATH: test/fixtures/petstore-old.yaml
+  CONSUMERS_DIR: test/fixtures/consumers
+
+jobs:
+  drift:
+    name: Check for breaking API changes
+    runs-on: ubuntu-latest
+    steps:
+      # Both refs are checked out whole, rather than extracting the one spec file
+      # out of git history: a spec may $ref sibling files, and those only resolve
+      # if the tree around them is present.
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          path: head
+
+      - name: Check out the base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: head/package-lock.json
+
+      - name: Build
+        working-directory: head
+        run: |
+          npm ci
+          npm run build
+
+      - name: Diff the spec across the pull request
+        id: drift
+        run: |
+          if [ ! -f "base/$SPEC_PATH" ]; then
+            echo "$SPEC_PATH does not exist on the base branch, so there is no"
+            echo "older contract to compare against. Nothing to report."
+            echo "status=skipped" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Manifests are read from the pull request, but the differ validates
+          # them against the base spec — they describe what consumers call today.
+          consumers=""
+          if [ -d "head/$CONSUMERS_DIR" ]; then
+            consumers="--consumers head/$CONSUMERS_DIR"
+          fi
+
+          set +e
+          node head/dist/cli.js diff "base/$SPEC_PATH" "head/$SPEC_PATH" \
+            $consumers --json --fail-on none > report.json 2> stderr.txt
+          code=$?
+          set -e
+
+          # --fail-on none means a non-zero exit here is exit code 2: the tool
+          # could not run at all. Usually a manifest that names something the
+          # spec does not have. That is a real failure, not a clean report.
+          if [ "$code" -ne 0 ]; then
+            echo "::error::api-contract-drift could not produce a report"
+            cat stderr.txt
+            exit 1
+          fi
+
+          node head/.github/scripts/drift-comment.mjs report.json "$SPEC_PATH" > comment.md
+          breaking=$(node -p "require('./report.json').summary.BREAKING")
+          echo "breaking=$breaking" >> "$GITHUB_OUTPUT"
+          echo "status=reported" >> "$GITHUB_OUTPUT"
+
+          echo "### API contract drift" >> "$GITHUB_STEP_SUMMARY"
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the pull request
+        if: steps.drift.outputs.status == 'reported'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { readFileSync } = require('node:fs');
+            const body = readFileSync('comment.md', 'utf8');
+            const breaking = Number('${{ steps.drift.outputs.breaking }}');
+
+            // Find our own previous comment so a pushed fix updates it in place
+            // rather than leaving a wall of stale verdicts on the thread.
+            const { data: comments } = await github.rest.issues.listComments({
+              ...context.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(
+              (comment) => comment.user.type === 'Bot' && comment.body.includes('<!-- api-contract-drift -->'),
+            );
+
+            // Commenting is how the result is delivered, not what the result is.
+            // A pull request from a fork gets a read-only token whatever the
+            // permissions block says, so failing the job here would report a
+            // permissions problem as an API breakage. The check itself is the
+            // next step, and it stands on its own.
+            try {
+              if (existing !== undefined) {
+                await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+              } else if (breaking > 0) {
+                // Only speak up unprompted when something is actually broken; a
+                // clean run on a clean pull request should stay quiet.
+                await github.rest.issues.createComment({
+                  ...context.repo,
+                  issue_number: context.issue.number,
+                  body,
+                });
+              }
+            } catch (error) {
+              core.warning(`Could not comment (${error.message}). The findings are in the job summary.`);
+            }
+
+      - name: Fail when the contract breaks
+        if: steps.drift.outputs.status == 'reported' && steps.drift.outputs.breaking != '0'
+        run: |
+          echo "::error::${{ steps.drift.outputs.breaking }} breaking change(s) in $SPEC_PATH"
+          exit 1
