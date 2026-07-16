@@ -1,0 +1,10 @@
+{
+  "consumer": "wrong-method-service",
+  "uses": [
+    {
+      "path": "/pets",
+      "method": "put",
+      "sends": ["name"]
+    }
+  ]
+}
